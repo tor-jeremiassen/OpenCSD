@@ -36,8 +36,24 @@ enum {
 	CS_ETM_PRIV_MAX,
 };
 
-static const u64 __perf_cs_etm_magic   = 0x3030303030303030ULL;
-#define CS_ETM_PRIV_SIZE (CS_ETM_PRIV_MAX * sizeof(u64))
+/* ETMv4 metadata */
+enum {
+	/* Dynamic, configurable parameters */
+	CS_ETMV4_TRCCONFIGR = CS_ETM_SNAPSHOT + 1,
+	CS_ETMV4_TRCTRACEIDR,
+	/* RO, taken from sysFS */
+	CS_ETMV4_TRCIDR0,
+	CS_ETMV4_TRCIDR1,
+	CS_ETMV4_TRCIDR2,
+	CS_ETMV4_TRCIDR8,
+	CS_ETMV4_TRCAUTHSTATUS,
+	CS_ETMV4_PRIV_MAX,
+};
+
+static const u64 __perf_cs_etmv3_magic   = 0x3030303030303030ULL;
+static const u64 __perf_cs_etmv4_magic   = 0x4040404040404040ULL;
+#define CS_ETMV3_PRIV_SIZE (CS_ETM_PRIV_MAX * sizeof(u64))
+#define CS_ETMV4_PRIV_SIZE (CS_ETMV4_PRIV_MAX * sizeof(u64))
 
 struct auxtrace_record *cs_etm_record_init(int *err);
 

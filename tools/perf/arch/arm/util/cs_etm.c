@@ -43,6 +43,8 @@ struct cs_etm_recording {
 	size_t			snapshot_size;
 };
 
+static bool cs_etm_is_etmv4(struct auxtrace_record *itr, int cpu);
+
 static int cs_etm_parse_snapshot_options(struct auxtrace_record *itr,
 					 struct record_opts *opts,
 					 const char *str)
@@ -265,17 +267,29 @@ static size_t
 cs_etm_info_priv_size(struct auxtrace_record *itr __maybe_unused,
 		      struct perf_evlist *evlist __maybe_unused)
 {
-	int records;
+	int i;
+	int etmv3 = 0, etmv4 = 0;
 	const struct cpu_map *cpus = evlist->cpus;
 
+	/* cpu map is not empty, we have specific CPUs to work with */
 	if (!cpu_map__empty(cpus)) {
-		records = cpu_map__nr(cpus);
-		goto out;
+		for (i = 0; i < cpu_map__nr(cpus); i++) {
+			if (cs_etm_is_etmv4(itr, cpus->map[i]))
+				etmv4++;
+			else
+				etmv3++;
+		}
+	} else {
+		/* get configuration for all CPUs in the system */
+		for (i = 0; i < cpu__max_cpu(); i++) {
+			if (cs_etm_is_etmv4(itr, i))
+				etmv4++;
+			else
+				etmv3++;
+		}
 	}
 
-	records = cpu__max_cpu();
-out:
-	return records * CS_ETM_PRIV_SIZE;
+	return (etmv4 * CS_ETMV4_PRIV_SIZE) + (etmv3 * CS_ETMV3_PRIV_SIZE);
 }
 
 static const char *metadata_etmv3_ro[CS_ETM_PRIV_MAX] = {
@@ -283,32 +297,87 @@ static const char *metadata_etmv3_ro[CS_ETM_PRIV_MAX] = {
 	[CS_ETM_ETMIDR]		= "mgmt/etmidr",
 };
 
-static int cs_etm_get_metadata(int cpu, int index,
-			       struct auxtrace_record *itr,
-			       struct auxtrace_info_event *info)
+static const char *metadata_etmv4_ro[CS_ETMV4_PRIV_MAX] = {
+	[CS_ETMV4_TRCIDR0]		= "trcidr/trcidr0",
+	[CS_ETMV4_TRCIDR1]		= "trcidr/trcidr1",
+	[CS_ETMV4_TRCIDR2]		= "trcidr/trcidr2",
+	[CS_ETMV4_TRCIDR8]		= "trcidr/trcidr8",
+	[CS_ETMV4_TRCAUTHSTATUS]	= "mgmt/trcauthstatus",
+};
+
+static bool cs_etm_is_etmv4(struct auxtrace_record *itr, int cpu)
 {
+	bool ret = false;
 	char path[PATH_MAX];
-	int offset = 0, ret = 0;
-	int i, scan;
+	int scan;
 	unsigned int val;
 	struct cs_etm_recording *ptr =
 			container_of(itr, struct cs_etm_recording, itr);
 	struct perf_pmu *cs_etm_pmu = ptr->cs_etm_pmu;
 
-	offset = index * CS_ETM_PRIV_MAX;
+	/* Take any of the RO files for ETMv4 and see if it present */
+	snprintf(path, PATH_MAX, "cpu%d/%s",
+		 cpu, metadata_etmv4_ro[CS_ETMV4_TRCIDR0]);
+	scan = perf_pmu__scan_file(cs_etm_pmu, path, "%x", &val);
+
+	/* The file was read sucessfully, we have a winner */
+	if (scan == 1)
+		ret = true;
+
+	return ret;
+}
+
+static int cs_etm_get_metadata(int cpu, int index,
+			       struct auxtrace_record *itr,
+			       struct auxtrace_info_event *info)
+{
+	bool is_etmv4;
+	char path[PATH_MAX];
+	const char **metadata;
+	int i, offset = 0, ret = 0;
+	int scan, start, stop;
+	u64 magic;
+	unsigned int val;
+	struct cs_etm_recording *ptr =
+			container_of(itr, struct cs_etm_recording, itr);
+	struct perf_pmu *cs_etm_pmu = ptr->cs_etm_pmu;
+
+	/* first see what kind of tracer this cpu is affined to */
+	is_etmv4 = cs_etm_is_etmv4(itr, cpu);
+	if (is_etmv4) {
+		magic = __perf_cs_etmv4_magic;
+		metadata = metadata_etmv4_ro;
+		/* parameters for read-only data */
+		start = CS_ETMV4_TRCIDR0;
+		stop = CS_ETMV4_PRIV_MAX;
+		offset = index * CS_ETMV4_PRIV_MAX;
+		info->priv[offset + CS_ETMV4_TRCCONFIGR] =
+						cs_etm_get_config(itr);
+		/* Get traceID from the framework */
+		info->priv[offset + CS_ETMV4_TRCTRACEIDR] =
+						coresight_get_trace_id(cpu);
+	} else {
+		magic = __perf_cs_etmv3_magic;
+		metadata = metadata_etmv3_ro;
+		/* parameters for read-only data */
+		start = CS_ETM_ETMCCER;
+		stop = CS_ETM_PRIV_MAX;
+		/* fetch ETMv3::ETMCR */
+		offset = index * CS_ETM_PRIV_MAX;
+		info->priv[offset + CS_ETM_ETMCR] = cs_etm_get_config(itr);
+		/* Get traceID from the framework */
+		info->priv[offset + CS_ETM_ETMTRACEIDR] =
+						coresight_get_trace_id(cpu);
+	}
 
 	/* Build generic header portion */
-	info->priv[offset + CS_ETM_MAGIC] = __perf_cs_etm_magic;
+	info->priv[offset + CS_ETM_MAGIC] = magic;
 	info->priv[offset + CS_ETM_CPU] = cpu;
 	info->priv[offset + CS_ETM_SNAPSHOT] = ptr->snapshot_mode;
 
-	/* Get user configurables from the session */
-	info->priv[offset + CS_ETM_ETMCR] = cs_etm_get_config(itr);
-	info->priv[offset + CS_ETM_ETMTRACEIDR] = coresight_get_trace_id(cpu);
-
 	/* Get RO metadata from sysfs */
-	for (i = CS_ETM_ETMCCER; i < CS_ETM_PRIV_MAX; i++) {
-		snprintf(path, PATH_MAX, "cpu%d/%s", cpu, metadata_etmv3_ro[i]);
+	for (i = start; i < stop; i++) {
+		snprintf(path, PATH_MAX, "cpu%d/%s", cpu, metadata[i]);
 
 		scan = perf_pmu__scan_file(cs_etm_pmu, path, "%x", &val);
 		if (scan != 1) {
