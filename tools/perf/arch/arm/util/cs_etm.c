@@ -28,7 +28,7 @@
 #include "../../util/evlist.h"
 #include "../../util/pmu.h"
 #include "../../util/thread_map.h"
-#include "cs_etm.h"
+#include "cs-etm.h"
 
 #include <stdlib.h>
 

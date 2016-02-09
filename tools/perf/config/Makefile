@@ -447,6 +447,18 @@ endif
 grep-libs  = $(filter -l%,$(1))
 strip-libs = $(filter-out -l%,$(1))
 
+ifdef NO_CSTRACE
+  CFLAGS += -DNO_CSTRACE
+else
+  CSTRACE_PATH = util/cs-etm-decoder/lib
+  ifdef DEBUG
+    LIBCSTRACE = -lcstraced_c_api -lcstraced
+  else
+    LIBCSTRACE = -lcstrace_c_api -lcstrace
+  endif
+  EXTLIBS += -L$(CSTRACE_PATH) $(LIBCSTRACE) -lstdc++
+endif
+
 ifdef NO_LIBPERL
   CFLAGS += -DNO_LIBPERL
 else

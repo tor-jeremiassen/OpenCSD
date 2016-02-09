@@ -70,4 +70,7 @@ static const u64 __perf_cs_etmv4_magic   = 0x4040404040404040ULL;
 
 struct auxtrace_record *cs_etm_record_init(int *err);
 
+int cs_etm__process_auxtrace_info(union perf_event *event,
+                                  struct perf_session *session);
+
 #endif

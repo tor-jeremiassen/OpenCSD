@@ -21,7 +21,7 @@
 #include "../../util/auxtrace.h"
 #include "../../util/evlist.h"
 #include "../../util/pmu.h"
-#include "cs_etm.h"
+#include "../../util/cs-etm.h"
 
 struct auxtrace_record
 *auxtrace_record__init(struct perf_evlist *evlist, int *err)
