@@ -1,0 +1,2 @@
+libperf-$(CONFIG_AUXTRACE) += cs-etm-decoder.o
+
