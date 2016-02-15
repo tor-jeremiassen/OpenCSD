@@ -1057,6 +1057,24 @@ static int cs_etm__process_event(struct perf_session *session,
                             event->mmap2.start, 
                             event->mmap2.len, 
                             cs_etm__mem_access);
+        if (symbol_conf.vmlinux_name != NULL) {
+                enum dso_kernel_type kernel_type;
+                //int err;
+
+                err = machine__create_kernel_maps(etm->machine);
+                (void) err;
+                if (machine__is_host(etm->machine)) {
+                        kernel_type = DSO_TYPE_KERNEL;
+                } else {
+                        kernel_type = DSO_TYPE_GUEST_KERNEL;
+                }
+                err = cs_etm_decoder__add_bin_file(etmq->decoder,
+                                                   etm->machine->vmlinux_maps[kernel_type]->start,
+                                                   etm->machine->vmlinux_maps[kernel_type]->end,
+                                                   symbol_conf.vmlinux_name);
+                (void) err;
+        }
+
                 }
         }
 
