@@ -148,6 +148,19 @@ static struct {
 
 		.invalid_fields = PERF_OUTPUT_TRACE,
 	},
+        [PERF_TYPE_CS_ETM] = {
+                .user_set = false,
+
+		.fields = PERF_OUTPUT_COMM | PERF_OUTPUT_TID |
+			      PERF_OUTPUT_CPU | PERF_OUTPUT_TIME |
+			      PERF_OUTPUT_EVNAME | PERF_OUTPUT_ADDR |
+                              PERF_OUTPUT_IP |
+			      PERF_OUTPUT_SYM | PERF_OUTPUT_DSO |
+			      PERF_OUTPUT_PERIOD,
+
+		.invalid_fields = PERF_OUTPUT_TRACE,
+                
+        }
 };
 
 static bool output_set_by_user(void)

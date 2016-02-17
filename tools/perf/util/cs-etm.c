@@ -86,6 +86,7 @@ struct cs_etm_queue {
         struct cs_etm_decoder  *decoder;
         u64                     offset;
         bool                    eot;
+        bool                    kernel_mapped;
 };
 
 static int cs_etm__get_trace(struct cs_etm_buffer *buff, struct cs_etm_queue *etmq);
@@ -377,6 +378,7 @@ static struct cs_etm_queue *cs_etm__alloc_queue(struct cs_etm_auxtrace *etm,
         etmq->tid = -1;
         etmq->cpu = -1;
         etmq->stop = false;
+        etmq->kernel_mapped = false;
 
         t_params = zalloc(sizeof(struct cs_etm_trace_params)*etm->num_cpu);
 
@@ -398,6 +400,7 @@ static struct cs_etm_queue *cs_etm__alloc_queue(struct cs_etm_auxtrace *etm,
         d_params.data = etmq;
 
         etmq->decoder = cs_etm_decoder__new(etm->num_cpu,&d_params,t_params);
+
 
         zfree(&t_params);
 
@@ -978,6 +981,9 @@ static uint32_t cs_etm__mem_access(struct cs_etm_queue *etmq, uint64_t address, 
                 cpumode = PERF_RECORD_MISC_USER;
         }
 
+        if (address < 0x800000) {
+                cpumode = PERF_RECORD_MISC_USER;
+        }
         thread__find_addr_map(thread, cpumode, MAP__FUNCTION, address,&al);
 
         if (!al.map || !al.map->dso) {
@@ -1037,45 +1043,46 @@ static int cs_etm__process_event(struct perf_session *session,
 
         if (event->header.type == PERF_RECORD_MMAP2) {
                 struct dso *dso;
+                int cpu;
+                struct cs_etm_queue *etmq;
+
+                cpu = sample->cpu;
+
+                etmq = cs_etm__cpu_to_etmq(etm,cpu);
+
+                if (!etmq) {
+                        return -1;
+                }
 
                 dso = dsos__find(&(etm->machine->dsos),event->mmap2.filename,false);
                 if (NULL != dso) {
-                        int cpu;
-                        struct cs_etm_queue *etmq;
-
-                        cpu = sample->cpu;
-
-                        etmq = cs_etm__cpu_to_etmq(etm,cpu);
-
-                        if (!etmq) {
-                                return -1;
-                        }
-
-                        err = 0;
                         err = cs_etm_decoder__add_mem_access_cb(
                             etmq->decoder,
                             event->mmap2.start, 
                             event->mmap2.len, 
                             cs_etm__mem_access);
-        if (symbol_conf.vmlinux_name != NULL) {
-                enum dso_kernel_type kernel_type;
-                //int err;
-
-                err = machine__create_kernel_maps(etm->machine);
-                (void) err;
-                if (machine__is_host(etm->machine)) {
-                        kernel_type = DSO_TYPE_KERNEL;
-                } else {
-                        kernel_type = DSO_TYPE_GUEST_KERNEL;
                 }
-                err = cs_etm_decoder__add_bin_file(etmq->decoder,
-                                                   etm->machine->vmlinux_maps[kernel_type]->start,
-                                                   etm->machine->vmlinux_maps[kernel_type]->end,
-                                                   symbol_conf.vmlinux_name);
-                (void) err;
-        }
 
+                if ((symbol_conf.vmlinux_name != NULL) && (!etmq->kernel_mapped)) {
+                        enum dso_kernel_type kernel_type;
+        
+                        err = machine__create_kernel_maps(etm->machine);
+                        if (machine__is_host(etm->machine)) {
+                                kernel_type = DSO_TYPE_KERNEL;
+                        } else {
+                                kernel_type = DSO_TYPE_GUEST_KERNEL;
+                        }
+                        if (!err) {
+        
+                                err = cs_etm_decoder__add_bin_file(etmq->decoder,
+                                                                etm->machine->vmlinux_maps[kernel_type]->start - 0x10000,
+                                                                etm->machine->vmlinux_maps[kernel_type]->end,
+                                                                symbol_conf.vmlinux_name);
+                                (void) err;
+                                etmq->kernel_mapped = true;
+                        }
                 }
+
         }
 
         if (etm->timeless_decoding) {
