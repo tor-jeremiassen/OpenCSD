@@ -724,8 +724,16 @@ static struct dso *machine__get_kernel(struct machine *machine)
 						 DSO_TYPE_GUEST_KERNEL);
 	}
 
-	if (kernel != NULL && (!kernel->has_build_id))
-		dso__read_running_kernel_build_id(kernel, machine);
+	if (kernel != NULL && (!kernel->has_build_id)) {
+                if (symbol_conf.vmlinux_name != NULL) {
+                        filename__read_build_id(symbol_conf.vmlinux_name,
+                                                kernel->build_id,
+                                                sizeof(kernel->build_id));
+                        kernel->has_build_id = 1;
+                } else {
+		        dso__read_running_kernel_build_id(kernel, machine);
+                }
+        }
 
 	return kernel;
 }
@@ -742,10 +750,12 @@ static void machine__get_kallsyms_filename(struct machine *machine, char *buf,
 	else {
                 if (symbol_conf.vmlinux_name != 0) {
                         unsigned char build_id[BUILD_ID_SIZE];
+                        char build_id_hex[SBUILD_ID_SIZE];
                         filename__read_build_id(symbol_conf.vmlinux_name,
                                                 build_id,
                                                 sizeof(build_id));
-                        (void) build_id__filename((char *)build_id,buf,bufsz);
+                        build_id__sprintf(build_id,sizeof(build_id), build_id_hex);
+                        build_id__filename((char *)build_id_hex,buf,bufsz);
                 } else {
 		        scnprintf(buf, bufsz, "%s/proc/kallsyms", machine->root_dir);
                 }
