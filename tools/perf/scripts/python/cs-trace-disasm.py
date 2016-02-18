@@ -10,14 +10,25 @@
 import os
 import sys
 
-sys.path.append(os.environ['PERF_EXEC_PATH'] + '/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
+sys.path.append(os.environ['PERF_EXEC_PATH'] + \
+                '/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
 
 from perf_trace_context import *
 from subprocess import *
 from Core import *
 import re;
 
-disasm_exec = "aarch64-linux-objdump"
+from optparse import OptionParser
+
+parser = OptionParser()
+parser.add_option("-k", "--vmlinux", dest="vmlinux_name",
+                  help="path to vmlinux file")
+parser.add_option("-d", "--objdump", dest="objdump_name",
+                  help="name of objdump executable (in path)")
+(options, args) = parser.parse_args()
+
+if (options.objdump_name == None):
+        sys.exit("No objdump executable specified - use -d or --objdump option")
 
 build_ids = dict();
 mmaps = dict();
@@ -25,24 +36,24 @@ disasm_cache = dict();
 disasm_re = re.compile("^\s*([0-9a-fA-F]+):")
 
 cache_size = 16*1024
-cache_hits = 0
-cache_misses = 0
-cache_flushes = 0
 
 def trace_begin():
-        cmdstr = os.environ['PERF_EXEC_PATH'] + "perf"
-        cmd_output = check_output([cmdstr, "buildid-list"]).split('\n');
+        cmd_output = check_output(["perf", "buildid-list"]).split('\n');
         bid_re = re.compile("([a-fA-f0-9]+)[ \t]([^ \n]+)")
         for line in cmd_output:
                 m = bid_re.search(line)
                 if (m != None) :
-                        build_ids[m.group(2)] = os.environ['HOME'] + "/.debug/" + m.group(2) + "/" + m.group(1);
+                        build_ids[m.group(2)] =  \
+                        os.environ['PERF_BUILDID_DIR'] +  \
+                        m.group(2) + "/" + m.group(1);
 
-        if ("[kernel.kallsyms]" in build_ids):
-                build_ids['[kernel.kallsyms]'] = "./vmlinux"
+        if ((options.vmlinux_name != None) and ("[kernel.kallsyms]" in build_ids)):
+                build_ids['[kernel.kallsyms]'] = options.vmlinux_name;
+        else:
+                del build_ids['[kernel.kallsyms]']
 
         mmap_re = re.compile("PERF_RECORD_MMAP2 -?[0-9]+/[0-9]+: \[(0x[0-9a-fA-F]+).*:\s.*\s(.*.so)")
-        cmd_output= check_output([cmdstr, "script", "--show-mmap-events"]).split('\n')
+        cmd_output= check_output("perf script --show-mmap-events | fgrep PERF_RECORD_MMAP2",shell=True).split('\n')
         for line in cmd_output:
                 m = mmap_re.search(line)
                 if (m != None) :
@@ -51,46 +62,37 @@ def trace_begin():
 
 
 def trace_end():
-        global cache_hits
-        global cache_misses
-        global cache_flushes
-        print "cache hits: ", cache_hits, "cache misses: ", cache_misses, "cache flushes: ", cache_flushes
         pass
 
 def process_event(t):
-        global cache_hits
-        global cache_misses
-        global cache_flushes
         global cache_size
-        global disasm_exec
+        global options 
 
         sample = t['sample']
         dso = t['dso']
 
-        if (len(disasm_cache) > 16*1024):
+        if (len(disasm_cache) > cache_size):
                 disasm_cache.clear();
-                cache_flushes += 1
 
         addr_range = format(sample['ip'],"x")  + ":" + format(sample['addr'],"x");
         try:
                 disasm_output = disasm_cache[addr_range];
-                cache_hits += 1
         except:
                 try:
                         fname = build_ids[dso];
                 except KeyError:
+                        if (dso == '[kernel.kallsyms]'):
+                                return;
                         fname = dso;
 
                 if (dso in mmaps):
                         offset = mmaps[dso];
-                        disasm = [disasm_exec,"-D","-z", "--adjust-vma="+format(offset,"#x"),"--start-address="+format(sample['ip'],"#x"),"--stop-address="+format(sample['addr'],"#x"), fname]
+                        disasm = [options.objdump_name,"-d","-z", "--adjust-vma="+format(offset,"#x"),"--start-address="+format(sample['ip'],"#x"),"--stop-address="+format(sample['addr'],"#x"), fname]
                 else:
                         offset = 0
-                        disasm = [disasm_exec,"-D","-z", "--start-address="+format(sample['ip'],"#x"),"--stop-address="+format(sample['addr'],"#x"),fname] 
-
+                        disasm = [options.objdump_name,"-d","-z", "--start-address="+format(sample['ip'],"#x"),"--stop-address="+format(sample['addr'],"#x"),fname] 
                 disasm_output = check_output(disasm).split('\n')
                 disasm_cache[addr_range] = disasm_output;
-                cache_misses += 1
 
         for line in disasm_output:
                 m = disasm_re.search(line)
