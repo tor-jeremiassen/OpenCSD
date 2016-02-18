@@ -981,9 +981,6 @@ static uint32_t cs_etm__mem_access(struct cs_etm_queue *etmq, uint64_t address, 
                 cpumode = PERF_RECORD_MISC_USER;
         }
 
-        if (address < 0x800000) {
-                cpumode = PERF_RECORD_MISC_USER;
-        }
         thread__find_addr_map(thread, cpumode, MAP__FUNCTION, address,&al);
 
         if (!al.map || !al.map->dso) {
@@ -1007,6 +1004,132 @@ static uint32_t cs_etm__mem_access(struct cs_etm_queue *etmq, uint64_t address, 
         }
 
         return len;
+}
+
+static bool check_need_swap(int file_endian)
+{
+	const int data = 1;
+	u8 *check = (u8 *)&data;
+	int host_endian;
+
+	if (check[0] == 1)
+		host_endian = ELFDATA2LSB;
+	else
+		host_endian = ELFDATA2MSB;
+
+	return host_endian != file_endian;
+}
+
+static int cs_etm__read_elf_info(const char *fname, uint64_t *foffset, uint64_t *fstart, uint64_t *fsize)
+{
+	FILE *fp;
+        u8 e_ident[EI_NIDENT];
+	int ret = -1;
+	bool need_swap = false;
+	size_t buf_size;
+	void *buf;
+	int i;
+
+	fp = fopen(fname, "r");
+	if (fp == NULL)
+		return -1;
+
+	if (fread(e_ident, sizeof(e_ident), 1, fp) != 1)
+		goto out;
+
+	if (memcmp(e_ident, ELFMAG, SELFMAG) ||
+	    e_ident[EI_VERSION] != EV_CURRENT)
+		goto out;
+
+	need_swap = check_need_swap(e_ident[EI_DATA]);
+
+	/* for simplicity */
+	fseek(fp, 0, SEEK_SET);
+
+	if (e_ident[EI_CLASS] == ELFCLASS32) {
+		Elf32_Ehdr ehdr;
+		Elf32_Phdr *phdr;
+
+		if (fread(&ehdr, sizeof(ehdr), 1, fp) != 1)
+			goto out;
+
+		if (need_swap) {
+			ehdr.e_phoff = bswap_32(ehdr.e_phoff);
+			ehdr.e_phentsize = bswap_16(ehdr.e_phentsize);
+			ehdr.e_phnum = bswap_16(ehdr.e_phnum);
+		}
+
+		buf_size = ehdr.e_phentsize * ehdr.e_phnum;
+		buf = malloc(buf_size);
+		if (buf == NULL)
+			goto out;
+
+		fseek(fp, ehdr.e_phoff, SEEK_SET);
+		if (fread(buf, buf_size, 1, fp) != 1)
+			goto out_free;
+
+		for (i = 0, phdr = buf; i < ehdr.e_phnum; i++, phdr++) {
+
+			if (need_swap) {
+				phdr->p_type = bswap_32(phdr->p_type);
+				phdr->p_offset = bswap_32(phdr->p_offset);
+				phdr->p_filesz = bswap_32(phdr->p_filesz);
+			}
+
+			if (phdr->p_type != PT_LOAD)
+				continue;
+
+                        *foffset = phdr->p_offset;
+                        *fstart = phdr->p_vaddr;
+                        *fsize = phdr->p_filesz;
+                        ret = 0;
+                        break;
+		}
+	} else {
+		Elf64_Ehdr ehdr;
+		Elf64_Phdr *phdr;
+
+		if (fread(&ehdr, sizeof(ehdr), 1, fp) != 1)
+			goto out;
+
+		if (need_swap) {
+			ehdr.e_phoff = bswap_64(ehdr.e_phoff);
+			ehdr.e_phentsize = bswap_16(ehdr.e_phentsize);
+			ehdr.e_phnum = bswap_16(ehdr.e_phnum);
+		}
+
+		buf_size = ehdr.e_phentsize * ehdr.e_phnum;
+		buf = malloc(buf_size);
+		if (buf == NULL)
+			goto out;
+
+		fseek(fp, ehdr.e_phoff, SEEK_SET);
+		if (fread(buf, buf_size, 1, fp) != 1)
+			goto out_free;
+
+		for (i = 0, phdr = buf; i < ehdr.e_phnum; i++, phdr++) {
+
+			if (need_swap) {
+				phdr->p_type = bswap_32(phdr->p_type);
+				phdr->p_offset = bswap_64(phdr->p_offset);
+				phdr->p_filesz = bswap_64(phdr->p_filesz);
+			}
+
+			if (phdr->p_type != PT_LOAD)
+				continue;
+
+                        *foffset = phdr->p_offset;
+                        *fstart = phdr->p_vaddr;
+                        *fsize = phdr->p_filesz;
+                        ret = 0;
+                        break;
+		}
+	}
+out_free:
+	free(buf);
+out:
+	fclose(fp);
+	return ret;
 }
 
 static int cs_etm__process_event(struct perf_session *session,
@@ -1064,21 +1187,21 @@ static int cs_etm__process_event(struct perf_session *session,
                 }
 
                 if ((symbol_conf.vmlinux_name != NULL) && (!etmq->kernel_mapped)) {
-                        enum dso_kernel_type kernel_type;
-        
-                        err = machine__create_kernel_maps(etm->machine);
-                        if (machine__is_host(etm->machine)) {
-                                kernel_type = DSO_TYPE_KERNEL;
-                        } else {
-                                kernel_type = DSO_TYPE_GUEST_KERNEL;
-                        }
+                        uint64_t foffset;
+                        uint64_t fstart;
+                        uint64_t fsize;
+
+                        err = cs_etm__read_elf_info(symbol_conf.vmlinux_name,
+                                                      &foffset,&fstart,&fsize);
+
                         if (!err) {
-        
-                                err = cs_etm_decoder__add_bin_file(etmq->decoder,
-                                                                etm->machine->vmlinux_maps[kernel_type]->start - 0x10000,
-                                                                etm->machine->vmlinux_maps[kernel_type]->end,
-                                                                symbol_conf.vmlinux_name);
-                                (void) err;
+                                cs_etm_decoder__add_bin_file(
+                                        etmq->decoder,
+                                        foffset,
+                                        fstart,
+                                        fsize & ~0x1ULL,
+                                        symbol_conf.vmlinux_name);
+
                                 etmq->kernel_mapped = true;
                         }
                 }

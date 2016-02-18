@@ -162,7 +162,7 @@ rctdl_err_t rctdl_dt_add_callback_mem_acc(const dcd_tree_handle_t handle, const 
         return RCTDL_ERR_FAIL;
 }
 
-rctdl_err_t rctdl_dt_add_binfile_mem_acc(const dcd_tree_handle_t handle, const rctdl_vaddr_t address, const rctdl_mem_space_acc_t mem_space, const char *filepath)
+rctdl_err_t rctdl_dt_add_binfile_region_mem_acc(const dcd_tree_handle_t handle, const file_mem_region_t *region_array, const int num_regions, const rctdl_mem_space_acc_t mem_space, const char *filepath)
 {
         (void) handle;
         (void) address;
@@ -297,10 +297,10 @@ static rctdl_datapath_resp_t cs_etm_decoder__gen_trace_elem_printer(
         case RCTDL_GEN_TRC_ELEM_TRACE_ON:
                 decoder->trace_on = true;
                 break;
-        case RCTDL_GEN_TRC_ELEM_TRACE_OVERFLOW:
-                decoder->trace_on = false;
-                decoder->discontinuity = true;
-                break;
+        //case RCTDL_GEN_TRC_ELEM_TRACE_OVERFLOW:
+                //decoder->trace_on = false;
+                //decoder->discontinuity = true;
+                //break;
         case RCTDL_GEN_TRC_ELEM_INSTR_RANGE:
                 cs_etm_decoder__buffer_packet(decoder,elem, CS_ETM_RANGE);
                 resp = RCTDL_RESP_WAIT;
@@ -316,7 +316,7 @@ static rctdl_datapath_resp_t cs_etm_decoder__gen_trace_elem_printer(
         case RCTDL_GEN_TRC_ELEM_ADDR_NACC:
         case RCTDL_GEN_TRC_ELEM_TIMESTAMP:
         case RCTDL_GEN_TRC_ELEM_CYCLE_COUNT:
-        case RCTDL_GEN_TRC_ELEM_TS_WITH_CC:
+        //case RCTDL_GEN_TRC_ELEM_TS_WITH_CC:
         case RCTDL_GEN_TRC_ELEM_EVENT:
         default:
             break;
@@ -426,9 +426,10 @@ int cs_etm_decoder__add_mem_access_cb(struct cs_etm_decoder *decoder, uint64_t a
 }
 
 
-int cs_etm_decoder__add_bin_file(struct cs_etm_decoder *decoder, uint64_t address, uint64_t len, const char *fname)
+int cs_etm_decoder__add_bin_file(struct cs_etm_decoder *decoder, uint64_t offset, uint64_t address, uint64_t len, const char *fname)
 {
         int err = 0;
+        file_mem_region_t region;
 
         (void) len;
         if (NULL == decoder)
@@ -437,8 +438,12 @@ int cs_etm_decoder__add_bin_file(struct cs_etm_decoder *decoder, uint64_t addres
         if (NULL == decoder->dcd_tree)
                 return -1;
 
-        err = rctdl_dt_add_binfile_mem_acc(decoder->dcd_tree,
-                                           address,
+        region.file_offset = offset;
+        region.start_address = address;
+        region.region_size = len;
+        err = rctdl_dt_add_binfile_region_mem_acc(decoder->dcd_tree,
+                                           &region,
+                                           1,
                                            RCTDL_MEM_SPACE_ANY,
                                            fname);
 

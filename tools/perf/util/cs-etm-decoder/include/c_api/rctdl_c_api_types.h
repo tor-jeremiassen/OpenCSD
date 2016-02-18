@@ -36,15 +36,15 @@
 #define ARM_RCTDL_C_API_TYPES_H_INCLUDED
 
 /* select the library types that are C compatible - the interface data types */
-#include "../rctdl_if_types.h"
-#include "../trc_gen_elem_types.h"
-#include "../trc_pkt_types.h"
+#include "rctdl_if_types.h"
+#include "trc_gen_elem_types.h"
+#include "trc_pkt_types.h"
 
 /* pull in the protocol decoder types. */
-#include "../etmv3/trc_pkt_types_etmv3.h"
-#include "../etmv4/trc_pkt_types_etmv4.h"
-#include "../ptm/trc_pkt_types_ptm.h"
-#include "../stm/trc_pkt_types_stm.h"
+#include "etmv3/trc_pkt_types_etmv3.h"
+#include "etmv4/trc_pkt_types_etmv4.h"
+#include "ptm/trc_pkt_types_ptm.h"
+#include "stm/trc_pkt_types_stm.h"
 
 /** @ingroup lib_c_api
 @{*/
@@ -106,6 +106,13 @@ typedef void (* FnStmPktMonDataIn)(     const void *p_context,
                                         const uint32_t size,
                                         const uint8_t *p_data);
 
+
+/** memory region type for adding multi-region binary files to memory access interface */
+typedef struct _file_mem_region {
+    size_t                  file_offset;    /**< Offset from start of file for memory region */
+    rctdl_vaddr_t           start_address;  /**< Start address of memory region */
+    size_t                  region_size;    /**< size in bytes of memory region */
+} file_mem_region_t;
 
 /** @}*/
 

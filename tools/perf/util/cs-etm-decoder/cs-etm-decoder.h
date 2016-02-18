@@ -105,7 +105,7 @@ int cs_etm_decoder__flush(struct cs_etm_decoder *);
 void cs_etm_decoder__free(struct cs_etm_decoder *);
 int cs_etm_decoder__get_packet(struct cs_etm_decoder *, struct cs_etm_packet *);
 
-int cs_etm_decoder__add_bin_file(struct cs_etm_decoder *, uint64_t, uint64_t, const char *);
+int cs_etm_decoder__add_bin_file(struct cs_etm_decoder *, uint64_t, uint64_t, uint64_t, const char *);
 
 const struct cs_etm_state *cs_etm_decoder__process_data_block(struct cs_etm_decoder *,
                                        uint64_t,
