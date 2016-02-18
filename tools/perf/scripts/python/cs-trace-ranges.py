@@ -15,22 +15,16 @@
 # this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-
 import os
 import sys
 
-#sys.path.append(os.environ['PERF_EXEC_PATH'] + \
-sys.path.append(	'/data/sysmodel_sdo/user/tor/linaro/merge/tools/perf/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
+sys.path.append(os.environ['PERF_EXEC_PATH'] + \
+                '/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
 
 from perf_trace_context import *
-from subprocess import *
-from Core import *
-import re;
 
 def trace_begin():
         pass;
-
-
 
 def trace_end():
         pass
@@ -38,7 +32,6 @@ def trace_end():
 def process_event(t):
 
         sample = t['sample']
-        dso = t['dso']
 
         print "range:",format(sample['ip'],"x"),"-",format(sample['addr'],"x")
 
