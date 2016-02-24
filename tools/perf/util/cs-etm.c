@@ -128,7 +128,6 @@ static void cs_etm__dump_event(struct cs_etm_auxtrace *etm,
                 t_params[i].reg_idr8 = etm->metadata[i][CS_ETMV4_TRCIDR8];
                 t_params[i].reg_configr = etm->metadata[i][CS_ETMV4_TRCCONFIGR];
                 t_params[i].reg_traceidr = etm->metadata[i][CS_ETMV4_TRCTRACEIDR];
-  //[CS_ETM_SNAPSHOT]        = "   Snapshot                       %"PRIx64"\n",
   //[CS_ETMV4_TRCAUTHSTATUS] = "   TRCAUTHSTATUS                  %"PRIx64"\n",
         }
         d_params.packet_printer = cs_etm__packet_dump;
@@ -739,8 +738,7 @@ static int cs_etm__synth_events(struct cs_etm_auxtrace *etm,
 
         evlist__for_each(evlist, evsel) {
 
-                if ((strncmp(evsel->name,"cs_etm/",7) == 0) && evsel->ids) {
-                        etm->pmu_type = evsel->attr.type;
+                if (evsel->attr.type == etm->pmu_type) {
                         found = true;
                         break;
                 }
@@ -1275,10 +1273,15 @@ static int cs_etm__process_auxtrace_event(struct perf_session *session,
 
 }
 
+static const char * const cs_etm_global_header_fmts[] = {
+  [CS_HEADER_VERSION_0]    = "   Header version                 %"PRIx64"\n",
+  [CS_PMU_TYPE_CPUS]       = "   PMU type/num cpus              %"PRIx64"\n",
+  [CS_ETM_SNAPSHOT]        = "   Snapshot                       %"PRIx64"\n",
+};
+
 static const char * const cs_etm_priv_fmts[] = {
   [CS_ETM_MAGIC]           = "   Magic number                   %"PRIx64"\n",
   [CS_ETM_CPU]             = "   CPU                            %"PRIx64"\n",
-  [CS_ETM_SNAPSHOT]        = "   Snapshot                       %"PRIx64"\n",
   [CS_ETM_ETMCR]           = "   ETMCR                          %"PRIx64"\n",
   [CS_ETM_ETMTRACEIDR]     = "   ETMTRACEIDR                    %"PRIx64"\n",
   [CS_ETM_ETMCCER]         = "   ETMCCER                        %"PRIx64"\n",
@@ -1288,7 +1291,6 @@ static const char * const cs_etm_priv_fmts[] = {
 static const char * const cs_etmv4_priv_fmts[] = {
   [CS_ETM_MAGIC]           = "   Magic number                   %"PRIx64"\n",
   [CS_ETM_CPU]             = "   CPU                            %"PRIx64"\n",
-  [CS_ETM_SNAPSHOT]        = "   Snapshot                       %"PRIx64"\n",
   [CS_ETMV4_TRCCONFIGR]    = "   TRCCONFIGR                     %"PRIx64"\n",
   [CS_ETMV4_TRCTRACEIDR]   = "   TRCTRACEIDR                    %"PRIx64"\n",
   [CS_ETMV4_TRCIDR0]       = "   TRCIDR0                        %"PRIx64"\n",
@@ -1331,37 +1333,40 @@ int cs_etm__process_auxtrace_info(union perf_event *event,
         struct cs_etm_auxtrace *etm = 0;
         int err = 0;
         u64 *ptr;
+        u64 *hdr = NULL;
         u64 **metadata = NULL;
         size_t i,j,k;
+        unsigned pmu_type;
 
         if (total_size < (event_header_size + info_header_size))
                 return -EINVAL;
 
         priv_size = total_size - event_header_size - info_header_size;
 
-        // There could potentially be both ETMV3 and ETMv4 CPUs so will 
-        // have to parse the data to count the number of CPUs
-         
-        i = 0;
+        // First the global part
+
         ptr = (u64 *) auxtrace_info->priv;
-        num_cpu = 0;
-        while (i < (priv_size >> 3)) {
-                if (ptr[i] == __perf_cs_etmv3_magic) {
-                        i += CS_ETM_PRIV_MAX;
-                } else if (ptr[i] == __perf_cs_etmv4_magic) {
-                        i += CS_ETMV4_PRIV_MAX;
-                } else {
+        if (ptr[0] == 0) {
+                hdr = zalloc(sizeof(u64 *) * CS_HEADER_VERSION_0_MAX);
+                if (hdr == NULL) {
                         return -EINVAL;
                 }
-                num_cpu++; 
+                for (i = 0; i < CS_HEADER_VERSION_0_MAX; ++i) {
+                        hdr[i] = ptr[i];
+                }
+                num_cpu = hdr[CS_PMU_TYPE_CPUS] & 0xffffffff;
+                pmu_type = (unsigned) ((hdr[CS_PMU_TYPE_CPUS] >> 32) & 0xffffffff);
+        } else {
+                return -EINVAL;
         }
+
         metadata = zalloc(sizeof(u64 *) * num_cpu);
 
         if (metadata == NULL) {
                 return -EINVAL;
         }
 
-        for (j = 0, i = 0; j < num_cpu; ++j) {
+        for (j = 0; j < num_cpu; ++j) {
                 if (ptr[i] == __perf_cs_etmv3_magic) {
                         metadata[j] = zalloc(sizeof(u64)*CS_ETM_PRIV_MAX);
                         if (metadata == NULL)
@@ -1390,6 +1395,8 @@ int cs_etm__process_auxtrace_info(union perf_event *event,
         etm = zalloc(sizeof(struct cs_etm_auxtrace));
 
         etm->num_cpu = num_cpu;
+        etm->pmu_type = pmu_type;
+        etm->snapshot_mode = (hdr[CS_ETM_SNAPSHOT] != 0);
 
         if (!etm)
                 return -ENOMEM;
