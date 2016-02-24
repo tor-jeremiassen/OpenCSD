@@ -64,6 +64,7 @@ struct cs_etm_auxtrace {
         u64                     instructions_sample_period;
         u64                     instructions_id;
         struct itrace_synth_opts synth_opts;
+        unsigned                pmu_type;
 };
 
 struct cs_etm_queue {
@@ -509,6 +510,7 @@ static int cs_etm__setup_queues(struct cs_etm_auxtrace *etm)
         return 0;
 }
 
+#if 0
 struct cs_etm_cache_entry {
         struct auxtrace_cache_entry     entry;
         uint64_t                        icount;
@@ -593,6 +595,7 @@ static struct cs_etm_cache_entry *cs_etm__cache_lookup(struct dso *dso,
 
         return auxtrace_cache__lookup(dso->auxtrace_cache, offset);
 }
+#endif
 
 static int cs_etm__synth_instruction_sample(struct cs_etm_queue *etmq,
                                            struct cs_etm_packet *packet)
@@ -609,10 +612,12 @@ static int cs_etm__synth_instruction_sample(struct cs_etm_queue *etmq,
         event->sample.header.size = sizeof(struct perf_event_header);
 
 
+        sample.ip = start_addr;
         sample.pid = etmq->pid;
         sample.tid = etmq->tid;
-        sample.id = 0; // etmq->etm->instructions_id;
-        sample.stream_id = 0; // etmq->etm->instructions_id;
+        sample.addr = end_addr;
+        sample.id = etmq->etm->instructions_id;
+        sample.stream_id = etmq->etm->instructions_id;
         sample.period = (end_addr - start_addr) >> 2; 
         sample.cpu = etmq->cpu;
         sample.flags = 0; // etmq->flags;
@@ -620,9 +625,7 @@ static int cs_etm__synth_instruction_sample(struct cs_etm_queue *etmq,
 
         //etmq->last_insn_cnt = etmq->state->tot_insn_cnt;
 
-        sample.ip = start_addr;
-        sample.addr = end_addr;
-
+#if 0
         {
                 struct   addr_location al;
                 uint64_t offset;
@@ -679,6 +682,7 @@ static int cs_etm__synth_instruction_sample(struct cs_etm_queue *etmq,
 endTest:
                 (void) offset;
         }
+#endif
 
         ret = perf_session__deliver_synth_event(etm->session,event, &sample);
 
@@ -735,7 +739,8 @@ static int cs_etm__synth_events(struct cs_etm_auxtrace *etm,
 
         evlist__for_each(evlist, evsel) {
 
-                if (evsel->attr.type == 6 && evsel->ids) {  // TEJ fix soon
+                if ((strncmp(evsel->name,"cs_etm/",7) == 0) && evsel->ids) {
+                        etm->pmu_type = evsel->attr.type;
                         found = true;
                         break;
                 }
@@ -756,7 +761,6 @@ static int cs_etm__synth_events(struct cs_etm_auxtrace *etm,
                 attr.sample_type &= ~(u64)PERF_SAMPLE_TIME;
         else
                 attr.sample_type |= PERF_SAMPLE_TIME;
-        attr.sample_type |= PERF_SAMPLE_CALLCHAIN;
 
         attr.exclude_user = evsel->attr.exclude_user;
         attr.exclude_kernel = evsel->attr.exclude_kernel;
