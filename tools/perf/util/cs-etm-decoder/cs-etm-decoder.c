@@ -1,4 +1,5 @@
 /*
+ *
  * Copyright(C) 2015 Linaro Limited. All rights reserved.
  * Author: Tor Jeremiassen <tor.jeremiassen@linaro.org>
  *
@@ -20,9 +21,9 @@
 #include "cs-etm-decoder.h"
 #include "../util.h"
 
-#include "include/c_api/rctdl_c_api.h"
-#include "include/rctdl_if_types.h"
-#include "include/etmv4/trc_pkt_types_etmv4.h"
+#include "c_api/rctdl_c_api.h"
+#include "rctdl_if_types.h"
+#include "etmv4/trc_pkt_types_etmv4.h"
 
 #define MAX_BUFFER 1024 
 
@@ -48,14 +49,14 @@ struct cs_etm_decoder
 #ifdef NO_CSTRACE
 rctdl_datapath_resp_t rctdl_dt_process_data(const dcd_tree_handle_t handle,
                                             const rctdl_datapath_op_t op,
-                                            const rctdl_trc_index_t index,
+                                            const rctdl_trc_index_t indx,
                                             const uint32_t dataBlockSize,
                                             const uint8_t *pDataBlock,
                                             uint32_t *numBytesProcessed)
 {
         (void) handle;
         (void) op;
-        (void) index;
+        (void) indx;
         (void) dataBlockSize;
         (void) pDataBlock;
         (void) numBytesProcessed;
@@ -165,7 +166,8 @@ rctdl_err_t rctdl_dt_add_callback_mem_acc(const dcd_tree_handle_t handle, const 
 rctdl_err_t rctdl_dt_add_binfile_region_mem_acc(const dcd_tree_handle_t handle, const file_mem_region_t *region_array, const int num_regions, const rctdl_mem_space_acc_t mem_space, const char *filepath)
 {
         (void) handle;
-        (void) address;
+        (void) region_array,
+        (void) num_regions,
         (void) mem_space;
         (void) filepath;
         return RCTDL_ERR_FAIL;

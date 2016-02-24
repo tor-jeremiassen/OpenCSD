@@ -20,6 +20,9 @@ import re;
 
 from optparse import OptionParser
 
+#
+# Add options to specify vmlinux file and the objdump executable
+#
 parser = OptionParser()
 parser.add_option("-k", "--vmlinux", dest="vmlinux_name",
                   help="path to vmlinux file")
@@ -29,6 +32,8 @@ parser.add_option("-d", "--objdump", dest="objdump_name",
 
 if (options.objdump_name == None):
         sys.exit("No objdump executable specified - use -d or --objdump option")
+
+# initialize global dicts and regular expression
 
 build_ids = dict();
 mmaps = dict();
@@ -71,10 +76,14 @@ def process_event(t):
         sample = t['sample']
         dso = t['dso']
 
+        # don't let the cache get too big, but don't bother with a fancy replacement policy
+        # just clear it when it hits max size
+
         if (len(disasm_cache) > cache_size):
                 disasm_cache.clear();
 
         addr_range = format(sample['ip'],"x")  + ":" + format(sample['addr'],"x");
+
         try:
                 disasm_output = disasm_cache[addr_range];
         except:
@@ -97,7 +106,10 @@ def process_event(t):
         for line in disasm_output:
                 m = disasm_re.search(line)
                 if (m != None) :
-                        print "\t",line
+                        try:
+                                print "\t",line
+                        except: 
+                                exit(1);
                 else:
                         continue;
 
