@@ -1,3 +1,7 @@
-CFLAGS_cs-etm-decoder.o += -I./util/cs-etm-decoder/include
+ifdef NO_CSTRACE
+libperf-$(CONFIG_AUXTRACE) += cs-etm-decoder-dummy.o
+else
+CFLAGS_cs-etm-decoder.o += -I$(CSTRACE_PATH)/include
 libperf-$(CONFIG_AUXTRACE) += cs-etm-decoder.o
+endif
 
