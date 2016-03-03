@@ -447,9 +447,7 @@ endif
 grep-libs  = $(filter -l%,$(1))
 strip-libs = $(filter-out -l%,$(1))
 
-ifndef CSTRACE_PATH
-  CFLAGS += -DNO_CSTRACE
-else
+ifdef CSTRACE_PATH
   ifeq (${IS_64_BIT}, 1)
     CSTRACE_LNX = linux64
   else
@@ -466,9 +464,6 @@ else
   $(call detected_var,CSTRACE_PATH)
   EXTLIBS += -L$(CSTRACE_LIB_PATH) $(LIBCSTRACE) -lstdc++
 endif
-
-$(info $$CSTRACE_INC_PATH is [$(CSTRACE_INC_PATH)])
-$(info $$CFLAGS is [$(CFLAGS)])
 
 ifdef NO_LIBPERL
   CFLAGS += -DNO_LIBPERL
