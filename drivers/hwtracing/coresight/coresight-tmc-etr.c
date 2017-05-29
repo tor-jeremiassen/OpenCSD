@@ -382,6 +382,7 @@ static void tmc_update_etr_buffer(struct coresight_device *csdev,
 				  struct perf_output_handle *handle,
 				  void *sink_config)
 {
+	bool lost = false;
 	int i, cur;
 	u32 *buf_ptr;
 	u32 read_ptr, write_ptr;
@@ -410,7 +411,7 @@ static void tmc_update_etr_buffer(struct coresight_device *csdev,
 	 */
 	status = readl_relaxed(drvdata->base + TMC_STS);
 	if (status & TMC_STS_FULL) {
-		perf_aux_output_flag(handle, PERF_AUX_FLAG_TRUNCATED);
+		lost = true;
 		to_read = drvdata->size;
 	} else {
 		to_read = CIRC_CNT(write_ptr, read_ptr, drvdata->size);
@@ -458,8 +459,11 @@ static void tmc_update_etr_buffer(struct coresight_device *csdev,
 			read_ptr -= drvdata->size;
 		/* Tell the HW */
 		writel_relaxed(read_ptr, drvdata->base + TMC_RRP);
-		perf_aux_output_flag(handle, PERF_AUX_FLAG_TRUNCATED);
+		lost = true;
 	}
+
+	if (lost)
+		perf_aux_output_flag(handle, PERF_AUX_FLAG_TRUNCATED);
 
 	cur = buf->cur;
 	offset = buf->offset;
