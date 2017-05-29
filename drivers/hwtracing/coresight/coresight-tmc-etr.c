@@ -384,6 +384,7 @@ static void tmc_update_etr_buffer(struct coresight_device *csdev,
 {
 	bool lost = false;
 	int i, cur;
+	const u32 *barrier;
 	u32 *buf_ptr;
 	u32 read_ptr, write_ptr;
 	u32 status, to_read;
@@ -467,11 +468,17 @@ static void tmc_update_etr_buffer(struct coresight_device *csdev,
 
 	cur = buf->cur;
 	offset = buf->offset;
+	barrier = barrier_pkt;
 
 	/* for every byte to read */
 	for (i = 0; i < to_read; i += 4) {
 		buf_ptr = buf->data_pages[cur] + offset;
 		*buf_ptr = readl_relaxed(drvdata->base + TMC_RRD);
+
+		if (lost && *barrier) {
+			*buf_ptr = *barrier;
+			barrier++;
+		}
 
 		offset += 4;
 		if (offset >= PAGE_SIZE) {
