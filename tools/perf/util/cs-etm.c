@@ -224,9 +224,38 @@ static int cs_etm__process_auxtrace_event(struct perf_session *session,
 					  union perf_event *event,
 					  struct perf_tool *tool)
 {
-	(void) session;
-	(void) event;
+	struct cs_etm_auxtrace *etm = container_of(session->auxtrace,
+						   struct cs_etm_auxtrace,
+						   auxtrace);
+
 	(void) tool;
+
+	if (!etm->data_queued) {
+		struct auxtrace_buffer *buffer;
+		off_t  data_offset;
+		int fd = perf_data_file__fd(session->file);
+		bool is_pipe = perf_data_file__is_pipe(session->file);
+		int err;
+
+		if (is_pipe)
+			data_offset = 0;
+		else {
+			data_offset = lseek(fd, 0, SEEK_CUR);
+			if (data_offset == -1)
+				return -errno;
+		}
+
+		err = auxtrace_queues__add_event(&etm->queues, session,
+						 event, data_offset, &buffer);
+		if (err)
+			return err;
+
+		if (dump_trace)
+			if (auxtrace_buffer__get_data(buffer, fd)) {
+				cs_etm__dump_event(etm, buffer);
+				auxtrace_buffer__put_data(buffer);
+			}
+	}
 	return 0;
 }
 
