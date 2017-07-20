@@ -38,6 +38,8 @@
 #include "thread-stack.h"
 #include "util.h"
 
+#define MAX_TIMESTAMP (~0ULL)
+
 struct cs_etm_auxtrace {
 	struct auxtrace			auxtrace;
 	struct auxtrace_queues		queues;
@@ -153,9 +155,29 @@ void cs_etm__dump_event(struct cs_etm_auxtrace *etm,
 static int cs_etm__flush_events(struct perf_session *session,
 				struct perf_tool *tool)
 {
-	(void) session;
-	(void) tool;
-	return 0;
+	struct cs_etm_auxtrace *etm = container_of(session->auxtrace,
+						   struct cs_etm_auxtrace,
+						   auxtrace);
+
+	int ret;
+
+	if (dump_trace)
+		return 0;
+
+	if (!tool->ordered_events)
+		return -EINVAL;
+
+	ret = cs_etm__update_queues(etm);
+
+	if (ret < 0)
+		return ret;
+
+	if (etm->timeless_decoding)
+		return cs_etm__process_timeless_queues(etm, -1,
+						       MAX_TIMESTAMP - 1);
+
+	return cs_etm__process_queues(etm, MAX_TIMESTAMP);
+
 }
 
 static void  cs_etm__set_pid_tid_cpu(struct cs_etm_auxtrace *etm,
