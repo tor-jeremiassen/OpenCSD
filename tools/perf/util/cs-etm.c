@@ -208,6 +208,38 @@ static void cs_etm__free(struct perf_session *session)
 	zfree(&aux);
 }
 
+struct cs_etm_queue *cs_etm__cpu_to_etmq(struct cs_etm_auxtrace *etm, int cpu)
+{
+	int q, j;
+
+	if (etm->queues.nr_queues == 0)
+		return NULL;
+
+	/* make sure q is in range even if cpu is not */
+	if (cpu < 0)
+		q = 0;
+	else if ((unsigned int) cpu >= etm->queues.nr_queues)
+		q = etm->queues.nr_queues - 1;
+	else
+		q = cpu;
+
+	/* try the obvious one first */
+	if (etm->queues.queue_array[q].cpu == cpu)
+		return etm->queues.queue_array[q].priv;
+
+	/* search for a match in queues with index < q */
+	for (j = q - 1; j >= 0; j--)
+		if (etm->queues.queue_array[j].cpu == cpu)
+			return etm->queues.queue_array[j].priv;
+
+	/* search for a match in the queues with index > q */
+	for (j = q + 1; j < (int) etm->queues.nr_queues; j++)
+		if (etm->queues.queue_array[j].cpu == cpu)
+			return etm->queues.queue_array[j].priv;
+
+	return NULL;
+}
+
 uint32_t cs_etm__mem_access(struct cs_etm_queue *etmq,
 			    uint64_t address,
 			    size_t size,

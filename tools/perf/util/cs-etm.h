@@ -100,4 +100,6 @@ struct cs_etm_queue;
 
 uint32_t cs_etm__mem_access(struct cs_etm_queue *etmq, uint64_t address,
 			    size_t size, uint8_t *buffer);
+
+struct cs_etm_queue *cs_etm__cpu_to_etmq(struct cs_etm_auxtrace *etm, int cpu);
 #endif
