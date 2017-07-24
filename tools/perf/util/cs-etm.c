@@ -208,6 +208,55 @@ static void cs_etm__free(struct perf_session *session)
 	zfree(&aux);
 }
 
+uint32_t cs_etm__mem_access(struct cs_etm_queue *etmq,
+			    uint64_t address,
+			    size_t size,
+			    uint8_t *buffer)
+{
+	struct	 addr_location al;
+	uint64_t offset;
+	struct	 thread *thread;
+	struct	 machine *machine;
+	uint8_t  cpumode;
+	int len;
+
+	if (!etmq)
+		return -1;
+
+	machine = etmq->etm->machine;
+	if (address >= etmq->etm->kernel_start)
+		cpumode = PERF_RECORD_MISC_KERNEL;
+	else
+		cpumode = PERF_RECORD_MISC_USER;
+
+	thread = etmq->thread;
+	if (!thread) {
+		if (cpumode != PERF_RECORD_MISC_KERNEL)
+			return -EINVAL;
+		thread = etmq->etm->unknown_thread;
+	}
+
+	thread__find_addr_map(thread, cpumode, MAP__FUNCTION, address, &al);
+
+	if (!al.map || !al.map->dso)
+		return 0;
+
+	if (al.map->dso->data.status == DSO_DATA_STATUS_ERROR &&
+	    dso__data_status_seen(al.map->dso, DSO_DATA_STATUS_SEEN_ITRACE))
+		return 0;
+
+	offset = al.map->map_ip(al.map, address);
+
+	map__load(al.map);
+
+	len = dso__data_read_offset(al.map->dso, machine, offset, buffer, size);
+
+	if (len <= 0)
+		return 0;
+
+	return len;
+}
+
 static int cs_etm__process_event(struct perf_session *session,
 				 union perf_event *event,
 				 struct perf_sample *sample,

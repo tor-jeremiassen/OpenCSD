@@ -96,4 +96,8 @@ struct auxtrace_buffer;
 void cs_etm__dump_event(struct cs_etm_auxtrace *etm,
 			struct auxtrace_buffer *buffer);
 
+struct cs_etm_queue;
+
+uint32_t cs_etm__mem_access(struct cs_etm_queue *etmq, uint64_t address,
+			    size_t size, uint8_t *buffer);
 #endif
