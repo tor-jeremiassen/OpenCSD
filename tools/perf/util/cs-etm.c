@@ -82,6 +82,73 @@ struct cs_etm_queue {
 	bool				eot;
 };
 
+static void cs_etm__packet_dump(const char *pkt_string)
+{
+	const char *color = PERF_COLOR_BLUE;
+
+	color_fprintf(stdout, color, "	%s\n", pkt_string);
+	fflush(stdout);
+}
+
+void cs_etm__dump_event(struct cs_etm_auxtrace *etm,
+			struct auxtrace_buffer *buffer)
+{
+	const char *color = PERF_COLOR_BLUE;
+	struct cs_etm_decoder_params d_params;
+	struct cs_etm_trace_params *t_params;
+	struct cs_etm_decoder *decoder;
+	size_t buffer_used = 0;
+	size_t i;
+
+	fprintf(stdout, "\n");
+	color_fprintf(stdout, color,
+		     ". ... CoreSight ETM Trace data: size %zu bytes\n",
+		     buffer->size);
+
+	/* Use metadata to fill in trace parameters for trace decoder */
+	t_params = zalloc(sizeof(*t_params) * etm->num_cpu);
+	for (i = 0; i < etm->num_cpu; i++) {
+		t_params[i].protocol = CS_ETM_PROTO_ETMV4i;
+		t_params[i].reg_idr0 = etm->metadata[i][CS_ETMV4_TRCIDR0];
+		t_params[i].reg_idr1 = etm->metadata[i][CS_ETMV4_TRCIDR1];
+		t_params[i].reg_idr2 = etm->metadata[i][CS_ETMV4_TRCIDR2];
+		t_params[i].reg_idr8 = etm->metadata[i][CS_ETMV4_TRCIDR8];
+		t_params[i].reg_configr = etm->metadata[i][CS_ETMV4_TRCCONFIGR];
+		t_params[i].reg_traceidr =
+					etm->metadata[i][CS_ETMV4_TRCTRACEIDR];
+	}
+
+	/* Set decoder parameters to simply print the trace packets */
+	d_params.packet_printer = cs_etm__packet_dump;
+	d_params.operation = CS_ETM_OPERATION_PRINT;
+	d_params.formatted = true;
+	d_params.fsyncs = false;
+	d_params.hsyncs = false;
+	d_params.frame_aligned = true;
+
+	decoder = cs_etm_decoder__new(etm->num_cpu, &d_params, t_params);
+
+	zfree(&t_params);
+
+	if (!decoder)
+		return;
+	do {
+		size_t consumed;
+		const struct cs_etm_state *state;
+
+		state = cs_etm_decoder__process_data_block(
+				decoder, buffer->offset,
+				&((uint8_t *)buffer->data)[buffer_used],
+				buffer->size - buffer_used, &consumed);
+		if (state && state->err)
+			break;
+
+		buffer_used += consumed;
+	} while (buffer_used < buffer->size);
+
+	cs_etm_decoder__free(decoder);
+}
+
 static int cs_etm__flush_events(struct perf_session *session,
 				struct perf_tool *tool)
 {

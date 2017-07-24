@@ -90,4 +90,10 @@ static inline int cs_etm__process_auxtrace_info(union perf_event *event,
 }
 #endif
 
+struct cs_etm_auxtrace;
+struct auxtrace_buffer;
+
+void cs_etm__dump_event(struct cs_etm_auxtrace *etm,
+			struct auxtrace_buffer *buffer);
+
 #endif
