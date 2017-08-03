@@ -83,6 +83,11 @@ libperf-$(CONFIG_AUXTRACE) += auxtrace.o
 libperf-$(CONFIG_AUXTRACE) += intel-pt-decoder/
 libperf-$(CONFIG_AUXTRACE) += intel-pt.o
 libperf-$(CONFIG_AUXTRACE) += intel-bts.o
+
+ifdef CSTRACE_PATH
+libperf-$(CONFIG_AUXTRACE) += cs-etm.o
+endif
+
 libperf-y += parse-branch-options.o
 libperf-y += dump-insn.o
 libperf-y += parse-regs-options.o
