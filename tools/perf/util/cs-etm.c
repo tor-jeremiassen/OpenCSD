@@ -497,6 +497,105 @@ static int cs_etm__synth_instruction_sample(struct cs_etm_queue *etmq,
 	return ret;
 }
 
+struct cs_etm_synth {
+	struct perf_tool dummy_tool;
+	struct perf_session *session;
+};
+
+static int cs_etm__event_synth(struct perf_tool *tool,
+			       union perf_event *event,
+			       struct perf_sample *sample,
+			       struct machine *machine)
+{
+	struct cs_etm_synth *cs_etm_synth =
+		      container_of(tool, struct cs_etm_synth, dummy_tool);
+
+	(void) sample;
+	(void) machine;
+
+	return perf_session__deliver_synth_event(cs_etm_synth->session,
+						 event, NULL);
+}
+
+static int cs_etm__synth_event(struct perf_session *session,
+			      struct perf_event_attr *attr, u64 id)
+{
+	struct cs_etm_synth cs_etm_synth;
+
+	memset(&cs_etm_synth, 0, sizeof(struct cs_etm_synth));
+	cs_etm_synth.session = session;
+
+	return perf_event__synthesize_attr(&cs_etm_synth.dummy_tool, attr, 1,
+					   &id, cs_etm__event_synth);
+}
+
+static int cs_etm__synth_events(struct cs_etm_auxtrace *etm,
+				struct perf_session *session)
+{
+	struct perf_evlist *evlist = session->evlist;
+	struct perf_evsel *evsel;
+	struct perf_event_attr attr;
+	bool found = false;
+	u64 id;
+	int err;
+
+	evlist__for_each_entry(evlist, evsel) {
+		if (evsel->attr.type == etm->pmu_type) {
+			found = true;
+			break;
+		}
+	}
+
+	if (!found) {
+		pr_debug("No selected events with CoreSight Trace data\n");
+		return 0;
+	}
+
+	memset(&attr, 0, sizeof(struct perf_event_attr));
+	attr.size = sizeof(struct perf_event_attr);
+	attr.type = PERF_TYPE_HARDWARE;
+	attr.sample_type = evsel->attr.sample_type & PERF_SAMPLE_MASK;
+	attr.sample_type |= PERF_SAMPLE_IP | PERF_SAMPLE_TID |
+			    PERF_SAMPLE_PERIOD;
+	if (etm->timeless_decoding)
+		attr.sample_type &= ~(u64)PERF_SAMPLE_TIME;
+	else
+		attr.sample_type |= PERF_SAMPLE_TIME;
+
+	attr.exclude_user = evsel->attr.exclude_user;
+	attr.exclude_kernel = evsel->attr.exclude_kernel;
+	attr.exclude_hv = evsel->attr.exclude_hv;
+	attr.exclude_host = evsel->attr.exclude_host;
+	attr.exclude_guest = evsel->attr.exclude_guest;
+	attr.sample_id_all = evsel->attr.sample_id_all;
+	attr.read_format = evsel->attr.read_format;
+
+	/* create new id val to be a fixed offset from evsel id */
+	id = evsel->id[0] + 1000000000;
+
+	if (!id)
+		id = 1;
+
+	if (etm->synth_opts.instructions) {
+		attr.config = PERF_COUNT_HW_INSTRUCTIONS;
+		attr.sample_period = etm->synth_opts.period;
+		etm->instructions_sample_period = attr.sample_period;
+		err = cs_etm__synth_event(session, &attr, id);
+
+		if (err) {
+			pr_err("%s: failed to synthesize 'instructions' event type\n",
+			       __func__);
+			return err;
+		}
+		etm->sample_instructions = true;
+		etm->instructions_sample_type = attr.sample_type;
+		etm->instructions_id = id;
+	}
+
+	etm->synth_needs_swap = evsel->needs_swap;
+	return 0;
+}
+
 int cs_etm__sample(struct cs_etm_queue *etmq)
 {
 	struct cs_etm_packet packet;
@@ -1037,6 +1136,20 @@ int cs_etm__process_auxtrace_info(union perf_event *event,
 
 	if (dump_trace)
 		return 0;
+
+	if (session->itrace_synth_opts && session->itrace_synth_opts->set)
+		etm->synth_opts = *session->itrace_synth_opts;
+	else
+		itrace_synth_opts__set_default(&etm->synth_opts);
+
+	etm->synth_opts.branches = false;
+	etm->synth_opts.callchain = false;
+	etm->synth_opts.calls = false;
+	etm->synth_opts.returns = false;
+
+	err = cs_etm__synth_events(etm, session);
+	if (err)
+		goto err_delete_thread;
 
 	err = auxtrace_queues__process_index(&etm->queues, session);
 	if (err)
