@@ -92,6 +92,7 @@ static inline int cs_etm__process_auxtrace_info(union perf_event *event,
 
 struct cs_etm_auxtrace;
 struct auxtrace_buffer;
+struct cs_etm_buffer;
 
 void cs_etm__dump_event(struct cs_etm_auxtrace *etm,
 			struct auxtrace_buffer *buffer);
@@ -109,5 +110,8 @@ struct cs_etm_queue *cs_etm__alloc_queue(struct cs_etm_auxtrace *etm,
 int cs_etm__update_queues(struct cs_etm_auxtrace *etm);
 
 int cs_etm__sample(struct cs_etm_queue *etmq);
+
+int cs_etm__get_trace(struct cs_etm_buffer *buff,
+		      struct cs_etm_queue *etmq);
 
 #endif

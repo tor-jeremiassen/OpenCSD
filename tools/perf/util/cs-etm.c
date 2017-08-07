@@ -210,6 +210,84 @@ static void cs_etm__free(struct perf_session *session)
 	zfree(&aux);
 }
 
+static void cs_etm__use_buffer_pid_tid(struct cs_etm_queue *etmq,
+				       struct auxtrace_queue *queue,
+				       struct auxtrace_buffer *buffer)
+{
+	if ((queue->cpu == -1) && (buffer->cpu != -1))
+		etmq->cpu = buffer->cpu;
+
+	etmq->pid = buffer->pid;
+	etmq->tid = buffer->tid;
+
+	thread__zput(etmq->thread);
+
+	if (etmq->tid != -1) {
+		etmq->thread = machine__findnew_thread(etmq->etm->machine,
+						       etmq->pid, etmq->tid);
+	}
+}
+
+int cs_etm__get_trace(struct cs_etm_buffer *buff, struct cs_etm_queue *etmq)
+{
+	struct auxtrace_buffer *aux_buffer = etmq->buffer;
+	struct auxtrace_buffer *old_buffer = aux_buffer;
+	struct auxtrace_queue *queue;
+
+	if (etmq->stop) {
+		buff->len = 0;
+		return 0;
+	}
+
+	queue = &etmq->etm->queues.queue_array[etmq->queue_nr];
+
+	aux_buffer = auxtrace_buffer__next(queue, aux_buffer);
+
+	/* if no more data, drop the previous auxtrace_buffer and return */
+	if (!aux_buffer) {
+		if (old_buffer)
+			auxtrace_buffer__drop_data(old_buffer);
+		buff->len = 0;
+		return 0;
+	}
+
+	etmq->buffer = aux_buffer;
+
+	/* if the aux_buffer doesn't have data associated, try to load it */
+	if (!aux_buffer->data) {
+		/* get the file desc associated with the perf data file */
+		int fd = perf_data_file__fd(etmq->etm->session->file);
+
+		aux_buffer->data = auxtrace_buffer__get_data(aux_buffer, fd);
+		if (!aux_buffer->data)
+			return -ENOMEM;
+	}
+
+	/* if valid, drop the previous buffer */
+	if (old_buffer)
+		auxtrace_buffer__drop_data(old_buffer);
+
+	buff->offset = aux_buffer->offset;
+	if (aux_buffer->use_data) {
+		buff->len = aux_buffer->use_size;
+		buff->buf = aux_buffer->use_data;
+	} else {
+		buff->len = aux_buffer->size;
+		buff->buf = aux_buffer->data;
+	}
+	buff->ref_timestamp = aux_buffer->reference;
+
+	if (etmq->use_buffer_pid_tid &&
+	    ((etmq->pid != aux_buffer->pid) ||
+	     (etmq->tid != aux_buffer->tid)))
+		cs_etm__use_buffer_pid_tid(etmq, queue, aux_buffer);
+
+	if (etmq->step_through_buffers)
+		etmq->stop = true;
+
+	return buff->len;
+}
+
 struct cs_etm_queue *cs_etm__alloc_queue(struct cs_etm_auxtrace *etm,
 					 unsigned int queue_nr)
 {
