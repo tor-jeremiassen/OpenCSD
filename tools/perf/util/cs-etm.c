@@ -288,6 +288,61 @@ out_free:
 	return NULL;
 }
 
+static int cs_etm__setup_queue(struct cs_etm_auxtrace *etm,
+			       struct auxtrace_queue *queue,
+			       unsigned int queue_nr)
+{
+	struct cs_etm_queue *etmq = queue->priv;
+
+	if (list_empty(&queue->head))
+		return 0;
+
+	if (!etmq) {
+		etmq = cs_etm__alloc_queue(etm, queue_nr);
+
+		if (!etmq)
+			return -ENOMEM;
+
+		queue->priv = etmq;
+
+		if (queue->cpu != -1)
+			etmq->cpu = queue->cpu;
+
+		etmq->tid = queue->tid;
+
+		if (etm->sampling_mode) {
+			if (etm->timeless_decoding)
+				etmq->step_through_buffers = true;
+			if (etm->timeless_decoding)
+				etmq->use_buffer_pid_tid = true;
+		}
+	}
+
+	return 0;
+}
+
+static int cs_etm__setup_queues(struct cs_etm_auxtrace *etm)
+{
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < etm->queues.nr_queues; i++) {
+		ret = cs_etm__setup_queue(etm, &etm->queues.queue_array[i], i);
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+
+int cs_etm__update_queues(struct cs_etm_auxtrace *etm)
+{
+	if (etm->queues.new_data) {
+		etm->queues.new_data = false;
+		return cs_etm__setup_queues(etm);
+	}
+	return 0;
+}
+
 struct cs_etm_queue *cs_etm__cpu_to_etmq(struct cs_etm_auxtrace *etm, int cpu)
 {
 	int q, j;

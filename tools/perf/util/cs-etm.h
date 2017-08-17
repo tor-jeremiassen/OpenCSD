@@ -106,4 +106,6 @@ struct cs_etm_queue *cs_etm__cpu_to_etmq(struct cs_etm_auxtrace *etm, int cpu);
 struct cs_etm_queue *cs_etm__alloc_queue(struct cs_etm_auxtrace *etm,
 					 unsigned int queue_nr);
 
+int cs_etm__update_queues(struct cs_etm_auxtrace *etm);
+
 #endif
