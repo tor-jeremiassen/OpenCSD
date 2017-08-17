@@ -116,4 +116,9 @@ int cs_etm__get_trace(struct cs_etm_buffer *buff,
 
 int cs_etm__run_decoder(struct cs_etm_queue *etmq);
 
+int cs_etm__process_queues(struct cs_etm_auxtrace *etm, u64 timestamp);
+
+int cs_etm__process_timeless_queues(struct cs_etm_auxtrace *etm,
+				    pid_t tid,
+				    u64 time_);
 #endif

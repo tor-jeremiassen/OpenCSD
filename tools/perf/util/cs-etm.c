@@ -157,6 +157,27 @@ static int cs_etm__flush_events(struct perf_session *session,
 	return 0;
 }
 
+static void  cs_etm__set_pid_tid_cpu(struct cs_etm_auxtrace *etm,
+				     struct auxtrace_queue *queue)
+{
+	struct cs_etm_queue *etmq = queue->priv;
+
+	if (queue->tid == -1) {
+		etmq->tid = machine__get_current_tid(etm->machine, etmq->cpu);
+		thread__zput(etmq->thread);
+	}
+
+	if ((!etmq->thread) && (etmq->tid != -1))
+		etmq->thread = machine__find_thread(etm->machine, -1,
+						    etmq->tid);
+
+	if (etmq->thread) {
+		etmq->pid = etmq->thread->pid_;
+		if (queue->cpu == -1)
+			etmq->cpu = etmq->thread->cpu;
+	}
+}
+
 static void cs_etm__free_queue(void *priv)
 {
 	struct cs_etm_queue *etmq = priv;
@@ -525,6 +546,76 @@ int cs_etm__update_queues(struct cs_etm_auxtrace *etm)
 	if (etm->queues.new_data) {
 		etm->queues.new_data = false;
 		return cs_etm__setup_queues(etm);
+	}
+	return 0;
+}
+
+int cs_etm__process_queues(struct cs_etm_auxtrace *etm, u64 timestamp)
+{
+	unsigned int queue_nr;
+	u64 ts;
+	int ret;
+
+	while (1) {
+		struct auxtrace_queue *queue;
+		struct cs_etm_queue *etmq;
+
+		if (!etm->heap.heap_cnt)
+			return 0;
+
+		if (etm->heap.heap_array[0].ordinal >= timestamp)
+			return 0;
+
+		queue_nr = etm->heap.heap_array[0].queue_nr;
+		queue = &etm->queues.queue_array[queue_nr];
+		etmq = queue->priv;
+
+		auxtrace_heap__pop(&etm->heap);
+
+		if (etm->heap.heap_cnt) {
+			ts = etm->heap.heap_array[0].ordinal + 1;
+			if (ts > timestamp)
+				ts = timestamp;
+		} else {
+			ts = timestamp;
+		}
+
+		cs_etm__set_pid_tid_cpu(etm, queue);
+
+		ret = cs_etm__run_decoder(etmq);
+
+		if (ret < 0) {
+			auxtrace_heap__add(&etm->heap, queue_nr, ts);
+			return ret;
+		}
+
+		if (!ret) {
+			ret = auxtrace_heap__add(&etm->heap, queue_nr, ts);
+			if (ret < 0)
+				return ret;
+		} else {
+			etmq->on_heap = false;
+		}
+	}
+	return 0;
+}
+
+int cs_etm__process_timeless_queues(struct cs_etm_auxtrace *etm,
+				    pid_t tid,
+				    u64 time_)
+{
+	struct auxtrace_queues *queues = &etm->queues;
+	unsigned int i;
+
+	for (i = 0; i < queues->nr_queues; i++) {
+		struct auxtrace_queue *queue = &etm->queues.queue_array[i];
+		struct cs_etm_queue *etmq = queue->priv;
+
+		if (etmq && ((tid == -1) || (etmq->tid == tid))) {
+			etmq->time = time_;
+			cs_etm__set_pid_tid_cpu(etm, queue);
+			cs_etm__run_decoder(etmq);
+		}
 	}
 	return 0;
 }
