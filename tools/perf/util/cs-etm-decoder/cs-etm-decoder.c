@@ -90,9 +90,6 @@ int cs_etm_decoder__reset(struct cs_etm_decoder *decoder)
 {
 	ocsd_datapath_resp_t dp_ret;
 
-	if (!decoder)
-		return -CS_ETM_ERR_PARAM;
-
 	dp_ret = ocsd_dt_process_data(decoder->dcd_tree, OCSD_OP_RESET,
 				      0, 0, NULL, NULL);
 	if (OCSD_DATA_RESP_IS_FATAL(dp_ret))

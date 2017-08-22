@@ -31,6 +31,7 @@
 #include "evlist.h"
 #include "intlist.h"
 #include "machine.h"
+#include "map.h"
 #include "perf.h"
 #include "thread.h"
 #include "thread_map.h"
@@ -706,11 +707,45 @@ static int cs_etm__process_event(struct perf_session *session,
 				 struct perf_sample *sample,
 				 struct perf_tool *tool)
 {
-	(void) session;
-	(void) event;
-	(void) sample;
-	(void) tool;
-	return 0;
+	struct cs_etm_auxtrace *etm = container_of(session->auxtrace,
+						   struct cs_etm_auxtrace,
+						   auxtrace);
+	struct cs_etm_queue *etmq;
+	u64 timestamp;
+	int err = 0;
+
+	if (dump_trace)
+		return 0;
+
+	if (!tool->ordered_events) {
+		pr_err("CoreSight ETM Trace requires ordered events\n");
+		return -EINVAL;
+	}
+
+	if (sample->time && (sample->time != (u64) -1))
+		timestamp = sample->time;
+	else
+		timestamp = 0;
+
+	if (timestamp || etm->timeless_decoding) {
+		err = cs_etm__update_queues(etm);
+		if (err)
+			return err;
+	}
+
+	etmq = cs_etm__cpu_to_etmq(etm, sample->cpu);
+	if (!etmq)
+		return -1;
+
+	if (etm->timeless_decoding) {
+		if (event->header.type == PERF_RECORD_EXIT)
+			err = cs_etm__process_timeless_queues(etm,
+							      event->fork.tid,
+							      sample->time);
+	} else if (timestamp)
+		err = cs_etm__process_queues(etm, timestamp);
+
+	return err;
 }
 
 static int cs_etm__process_auxtrace_event(struct perf_session *session,
