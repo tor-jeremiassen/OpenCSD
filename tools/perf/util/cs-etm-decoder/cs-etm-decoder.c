@@ -119,6 +119,23 @@ int cs_etm_decoder__get_packet(struct cs_etm_decoder *decoder,
 	return 0;
 }
 
+static void cs_etm_decoder__clear_buffer(struct cs_etm_decoder *decoder)
+{
+	int i;
+
+	decoder->head = 0;
+	decoder->tail = 0;
+	decoder->end_tail = 0;
+	decoder->packet_count = 0;
+	for (i = 0; i < MAX_BUFFER; i++) {
+		decoder->packet_buffer[i].start_addr = 0xdeadbeefdeadbeefUL;
+		decoder->packet_buffer[i].end_addr   = 0xdeadbeefdeadbeefUL;
+		decoder->packet_buffer[i].exc	     = false;
+		decoder->packet_buffer[i].exc_ret    = false;
+		decoder->packet_buffer[i].cpu	     = INT_MIN;
+	}
+}
+
 const struct cs_etm_state *
 cs_etm_decoder__process_data_block(struct cs_etm_decoder *decoder,
 				   uint64_t indx, const uint8_t *buf,
@@ -336,6 +353,7 @@ cs_etm_decoder__new(uint32_t num_cpu, struct cs_etm_decoder_params *d_params,
 
 	decoder->state.data = d_params->data;
 	decoder->prev_return = OCSD_RESP_CONT;
+	cs_etm_decoder__clear_buffer(decoder);
 	format = (d_params->formatted ? OCSD_TRC_SRC_FRAME_FORMATTED :
 					 OCSD_TRC_SRC_SINGLE);
 	flags = 0;
