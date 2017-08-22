@@ -23,6 +23,7 @@
 #include "cs-etm-decoder.h"
 #include "c_api/opencsd_c_api.h"
 #include "etmv4/trc_pkt_types_etmv4.h"
+#include "intlist.h"
 #include "ocsd_if_types.h"
 #include "util.h"
 
@@ -84,6 +85,24 @@ int cs_etm_decoder__add_mem_access_cb(struct cs_etm_decoder *decoder,
 		return -CS_ETM_ERR_DECODER;
 
 	return 0;
+}
+
+static int cs_etm_decoder__flush_packet(struct cs_etm_decoder *decoder)
+{
+	int err = 0;
+
+	if (!decoder)
+		return -CS_ETM_ERR_PARAM;
+
+	if (decoder->packet_count >= MAX_BUFFER - 1)
+		return -CS_ETM_ERR_OVERFLOW;
+
+	if (decoder->tail != decoder->end_tail) {
+		decoder->tail = (decoder->tail + 1) & (MAX_BUFFER - 1);
+		decoder->packet_count++;
+	}
+
+	return err;
 }
 
 int cs_etm_decoder__reset(struct cs_etm_decoder *decoder)
@@ -214,6 +233,120 @@ static void cs_etm_decoder__gen_etmv4_config(struct cs_etm_trace_params *params,
 	config->core_prof = profile_CortexA;
 }
 
+static int cs_etm_decoder__buffer_packet(struct cs_etm_decoder *decoder,
+					 const ocsd_generic_trace_elem *elem,
+					 const uint8_t trace_chan_id,
+					 enum cs_etm_sample_type sample_type)
+{
+	int err = 0;
+	uint32_t et = 0;
+	struct int_node *inode = NULL;
+
+	if (!decoder)
+		return -CS_ETM_ERR_PARAM;
+
+	if (decoder->packet_count >= MAX_BUFFER - 1)
+		return -CS_ETM_ERR_OVERFLOW;
+
+	err = cs_etm_decoder__flush_packet(decoder);
+
+	if (err)
+		return err;
+
+	et = decoder->end_tail;
+	/* Search the RB tree for the cpu associated with this traceID */
+	inode = intlist__find(traceid_list, trace_chan_id);
+	if (!inode)
+		return PTR_ERR(inode);
+
+	decoder->packet_buffer[et].sample_type	= sample_type;
+	decoder->packet_buffer[et].start_addr	= elem->st_addr;
+	decoder->packet_buffer[et].end_addr	= elem->en_addr;
+	decoder->packet_buffer[et].exc		= false;
+	decoder->packet_buffer[et].exc_ret	= false;
+	decoder->packet_buffer[et].cpu		= *((int *)inode->priv);
+
+	et = (et + 1) & (MAX_BUFFER - 1);
+
+	decoder->end_tail = et;
+
+	return err;
+}
+
+static int cs_etm_decoder__mark_exception(struct cs_etm_decoder *decoder)
+{
+	int err = 0;
+
+	if (!decoder)
+		return -CS_ETM_ERR_PARAM;
+
+	decoder->packet_buffer[decoder->end_tail].exc = true;
+
+	return err;
+}
+
+static int cs_etm_decoder__mark_exception_return(struct cs_etm_decoder *decoder)
+{
+	int err = 0;
+
+	if (!decoder)
+		return -CS_ETM_ERR_PARAM;
+
+	decoder->packet_buffer[decoder->end_tail].exc_ret = true;
+
+	return err;
+}
+
+static ocsd_datapath_resp_t cs_etm_decoder__gen_trace_elem_printer(
+			const void *context,
+			const ocsd_trc_index_t indx,
+			const uint8_t trace_chan_id,
+			const ocsd_generic_trace_elem *elem)
+{
+	ocsd_datapath_resp_t resp = OCSD_RESP_CONT;
+	struct cs_etm_decoder *decoder = (struct cs_etm_decoder *) context;
+
+	(void) indx;
+	(void) trace_chan_id;
+
+	switch (elem->elem_type) {
+	case OCSD_GEN_TRC_ELEM_UNKNOWN:
+		break;
+	case OCSD_GEN_TRC_ELEM_NO_SYNC:
+		decoder->trace_on = false;
+		break;
+	case OCSD_GEN_TRC_ELEM_TRACE_ON:
+		decoder->trace_on = true;
+		break;
+	case OCSD_GEN_TRC_ELEM_INSTR_RANGE:
+		cs_etm_decoder__buffer_packet(decoder, elem,
+					      trace_chan_id, CS_ETM_RANGE);
+		resp = OCSD_RESP_WAIT;
+		break;
+	case OCSD_GEN_TRC_ELEM_EXCEPTION:
+		cs_etm_decoder__mark_exception(decoder);
+		break;
+	case OCSD_GEN_TRC_ELEM_EXCEPTION_RET:
+		cs_etm_decoder__mark_exception_return(decoder);
+		break;
+	case OCSD_GEN_TRC_ELEM_PE_CONTEXT:
+	case OCSD_GEN_TRC_ELEM_EO_TRACE:
+	case OCSD_GEN_TRC_ELEM_ADDR_NACC:
+	case OCSD_GEN_TRC_ELEM_TIMESTAMP:
+	case OCSD_GEN_TRC_ELEM_CYCLE_COUNT:
+	case OCSD_GEN_TRC_ELEM_ADDR_UNKNOWN:
+	case OCSD_GEN_TRC_ELEM_EVENT:
+	case OCSD_GEN_TRC_ELEM_SWTRACE:
+	case OCSD_GEN_TRC_ELEM_CUSTOM:
+	default:
+		break;
+	}
+
+	decoder->state.err = 0;
+
+	return resp;
+}
+
 static ocsd_datapath_resp_t
 cs_etm_decoder__etmv4i_packet_printer(const void *context,
 				      const ocsd_datapath_op_t op,
@@ -313,6 +446,33 @@ static int cs_etm_decoder__create_etmv4i_packet_printer(
 	return 0;
 }
 
+static int cs_etm_decoder__create_etmv4i_packet_decoder(
+					struct cs_etm_decoder_params *d_params,
+					struct cs_etm_trace_params *t_params,
+					struct cs_etm_decoder *decoder)
+{
+	ocsd_etmv4_cfg trace_config;
+	int ret = 0;
+	unsigned char CSID; /* CSID extracted from the config data */
+
+	decoder->packet_printer = d_params->packet_printer;
+
+	cs_etm_decoder__gen_etmv4_config(t_params, &trace_config);
+
+	ret = ocsd_dt_create_decoder(decoder->dcd_tree,
+				     OCSD_BUILTIN_DCD_ETMV4I,
+				     OCSD_CREATE_FLG_FULL_DECODER,
+				     (void *)&trace_config, &CSID);
+
+	if (ret != 0)
+		return -CS_ETM_ERR_DECODER;
+
+	ret = ocsd_dt_set_gen_elem_outfn(decoder->dcd_tree,
+					 cs_etm_decoder__gen_trace_elem_printer,
+					 decoder);
+	return ret;
+}
+
 int
 cs_etm_decoder__create_etmv4i_decoder(struct cs_etm_decoder_params *d_params,
 				      struct cs_etm_trace_params *t_params,
@@ -322,6 +482,10 @@ cs_etm_decoder__create_etmv4i_decoder(struct cs_etm_decoder_params *d_params,
 
 	if (d_params->operation == CS_ETM_OPERATION_PRINT)
 		ret = cs_etm_decoder__create_etmv4i_packet_printer(d_params,
+								   t_params,
+								   decoder);
+	else if (d_params->operation == CS_ETM_OPERATION_DECODE)
+		ret = cs_etm_decoder__create_etmv4i_packet_decoder(d_params,
 								   t_params,
 								   decoder);
 	else
