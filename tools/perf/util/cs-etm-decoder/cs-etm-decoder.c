@@ -45,3 +45,63 @@ struct cs_etm_decoder {
 	uint32_t		end_tail;
 	struct list_head	channel_list;
 };
+
+const struct cs_etm_state *
+cs_etm_decoder__process_data_block(struct cs_etm_decoder *decoder,
+				   uint64_t indx, const uint8_t *buf,
+				   size_t len, size_t *consumed)
+{
+	int ret = 0;
+	ocsd_datapath_resp_t dp_ret = decoder->prev_return;
+	size_t processed = 0;
+
+	if (!decoder)
+		return NULL;
+
+	if (decoder->packet_count > 0) {
+		decoder->state.err = ret;
+		*consumed = processed;
+		return &decoder->state;
+	}
+
+	while ((processed < len) && (ret == 0)) {
+		if (OCSD_DATA_RESP_IS_WAIT(dp_ret)) {
+			dp_ret = ocsd_dt_process_data(decoder->dcd_tree,
+						      OCSD_OP_FLUSH,
+						      0,
+						      0,
+						      NULL,
+						      NULL);
+			break;
+		} else if (OCSD_DATA_RESP_IS_CONT(dp_ret)) {
+			uint32_t count;
+
+			dp_ret = ocsd_dt_process_data(decoder->dcd_tree,
+						      OCSD_OP_DATA,
+						      indx + processed,
+						      len - processed,
+						      &buf[processed],
+						      &count);
+			processed += count;
+		} else {
+			ret = -CS_ETM_ERR_DECODER;
+		}
+
+	}
+	/*
+	 * Adjust the counts of processed and previously processed
+	 * data based on the return code and previous return code..
+	 */
+	if (OCSD_DATA_RESP_IS_WAIT(dp_ret)) {
+		if (OCSD_DATA_RESP_IS_CONT(decoder->prev_return))
+			decoder->prev_processed = processed;
+		processed = 0;
+	} else if (OCSD_DATA_RESP_IS_WAIT(decoder->prev_return)) {
+		processed = decoder->prev_processed;
+		decoder->prev_processed = 0;
+	}
+	*consumed = processed;
+	decoder->prev_return = dp_ret;
+	decoder->state.err = ret;
+	return &decoder->state;
+}

@@ -104,4 +104,9 @@ enum {
 	CS_ETM_OPERATION_PRINT = 1,
 	CS_ETM_OPERATION_DECODE,
 };
+
+const struct cs_etm_state *
+cs_etm_decoder__process_data_block(struct cs_etm_decoder *decoder,
+				   uint64_t indx, const uint8_t *buf,
+				   size_t len, size_t *consumed);
 #endif /* INCLUDE__CS_ETM_DECODER_H__ */
