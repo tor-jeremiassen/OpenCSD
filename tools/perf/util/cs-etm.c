@@ -476,6 +476,50 @@ int cs_etm__sample(struct cs_etm_queue *etmq)
 	return 0;
 }
 
+int cs_etm__run_decoder(struct cs_etm_queue *etmq)
+{
+	struct cs_etm_buffer buffer;
+	size_t buffer_used;
+	int err = 0;
+
+	/* Go through each buffer in the queue and decode them one by one */
+more:
+	buffer_used = 0;
+	memset(&buffer, 0, sizeof(buffer));
+	err = cs_etm__get_trace(&buffer, etmq);
+	if (err <= 0)
+		return err;
+	/*
+	 * cannot assume consecutive blocks in the data file are contiguous
+	 * trace as will have start/stopped. Reset the decoder to force re-sync
+	 */
+	err = cs_etm_decoder__reset(etmq->decoder);
+	if (err != 0)
+		return err;
+
+	/* run trace decoder until buffer consumed or end of trace */
+	do {
+		size_t processed = 0;
+
+		etmq->state = cs_etm_decoder__process_data_block(
+						etmq->decoder,
+						etmq->offset,
+						&buffer.buf[buffer_used],
+						buffer.len - buffer_used,
+						&processed);
+		err = (!etmq->state) ? -1 : etmq->state->err;
+		etmq->offset += processed;
+		buffer_used += processed;
+		if (err)
+			return err;
+		cs_etm__sample(etmq);
+
+	} while (!etmq->eot && (buffer.len > buffer_used));
+
+goto more;
+	return err;
+}
+
 int cs_etm__update_queues(struct cs_etm_auxtrace *etm)
 {
 	if (etm->queues.new_data) {

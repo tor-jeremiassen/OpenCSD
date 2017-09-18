@@ -114,4 +114,6 @@ int cs_etm__sample(struct cs_etm_queue *etmq);
 int cs_etm__get_trace(struct cs_etm_buffer *buff,
 		      struct cs_etm_queue *etmq);
 
+int cs_etm__run_decoder(struct cs_etm_queue *etmq);
+
 #endif

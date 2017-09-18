@@ -129,6 +129,8 @@ int cs_etm_decoder__add_mem_access_cb(struct cs_etm_decoder *decoder,
 int cs_etm_decoder__get_packet(struct cs_etm_decoder *decoder,
 			       struct cs_etm_packet *packet);
 
+int cs_etm_decoder__reset(struct cs_etm_decoder *decoder);
+
 int
 cs_etm_decoder__create_etmv4i_decoder(struct cs_etm_decoder_params *d_params,
 				      struct cs_etm_trace_params *t_params,

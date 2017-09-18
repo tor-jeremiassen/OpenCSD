@@ -86,6 +86,21 @@ int cs_etm_decoder__add_mem_access_cb(struct cs_etm_decoder *decoder,
 	return 0;
 }
 
+int cs_etm_decoder__reset(struct cs_etm_decoder *decoder)
+{
+	ocsd_datapath_resp_t dp_ret;
+
+	if (!decoder)
+		return -CS_ETM_ERR_PARAM;
+
+	dp_ret = ocsd_dt_process_data(decoder->dcd_tree, OCSD_OP_RESET,
+				      0, 0, NULL, NULL);
+	if (OCSD_DATA_RESP_IS_FATAL(dp_ret))
+		return -CS_ETM_ERR_DECODER;
+
+	return 0;
+}
+
 int cs_etm_decoder__get_packet(struct cs_etm_decoder *decoder,
 			       struct cs_etm_packet *packet)
 {
