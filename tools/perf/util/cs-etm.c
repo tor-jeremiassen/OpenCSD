@@ -334,6 +334,70 @@ static int cs_etm__setup_queues(struct cs_etm_auxtrace *etm)
 	return 0;
 }
 
+/*
+ * The cs etm packet encodes an instruction range between a branch target
+ * and the next taken branch. Generate sample accordingly.
+ */
+static int cs_etm__synth_instruction_sample(struct cs_etm_queue *etmq,
+					    struct cs_etm_packet *packet)
+{
+	int ret = 0;
+	struct cs_etm_auxtrace *etm = etmq->etm;
+	union perf_event *event = etmq->event_buf;
+	struct perf_sample sample = {.ip = 0,};
+	uint64_t start_addr = packet->start_addr;
+	uint64_t end_addr = packet->end_addr;
+
+	event->sample.header.type = PERF_RECORD_SAMPLE;
+	event->sample.header.misc = PERF_RECORD_MISC_USER;
+	event->sample.header.size = sizeof(struct perf_event_header);
+
+	sample.ip = start_addr;
+	sample.pid = etmq->pid;
+	sample.tid = etmq->tid;
+	sample.addr = end_addr;
+	sample.id = etmq->etm->instructions_id;
+	sample.stream_id = etmq->etm->instructions_id;
+	/* approximate the period to be the number of words in the range */
+	sample.period = (end_addr - start_addr) >> 2;
+	sample.cpu = packet->cpu;
+	sample.flags = 0;
+	sample.insn_len = 1;
+	sample.cpumode = event->header.misc;
+
+	ret = perf_session__deliver_synth_event(etm->session, event, &sample);
+
+	if (ret)
+		pr_err(
+		"CS ETM Trace: failed to deliver instruction event, error %d\n",
+		ret);
+
+	return ret;
+}
+
+int cs_etm__sample(struct cs_etm_queue *etmq)
+{
+	struct cs_etm_packet packet;
+	int err;
+
+	err = cs_etm_decoder__get_packet(etmq->decoder, &packet);
+	/* if there is no sample, it returns err = -1, no real error */
+	if (err)
+		return err;
+
+	/*
+	 * if the packet contains an instruction range, generate
+	 * an instruction sequence event
+	 */
+	if (packet.sample_type & CS_ETM_RANGE) {
+		err = cs_etm__synth_instruction_sample(etmq, &packet);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
 int cs_etm__update_queues(struct cs_etm_auxtrace *etm)
 {
 	if (etm->queues.new_data) {

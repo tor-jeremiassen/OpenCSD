@@ -86,6 +86,27 @@ int cs_etm_decoder__add_mem_access_cb(struct cs_etm_decoder *decoder,
 	return 0;
 }
 
+int cs_etm_decoder__get_packet(struct cs_etm_decoder *decoder,
+			       struct cs_etm_packet *packet)
+{
+	if (!decoder)
+		return -CS_ETM_ERR_PARAM;
+
+	if (decoder->packet_count == 0)
+		return -CS_ETM_ERR_NODATA;
+
+	if (!packet)
+		return -CS_ETM_ERR_PARAM;
+
+	*packet = decoder->packet_buffer[decoder->head];
+
+	decoder->head = (decoder->head + 1) & (MAX_BUFFER - 1);
+
+	decoder->packet_count--;
+
+	return 0;
+}
+
 const struct cs_etm_state *
 cs_etm_decoder__process_data_block(struct cs_etm_decoder *decoder,
 				   uint64_t indx, const uint8_t *buf,

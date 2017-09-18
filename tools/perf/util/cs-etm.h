@@ -108,4 +108,6 @@ struct cs_etm_queue *cs_etm__alloc_queue(struct cs_etm_auxtrace *etm,
 
 int cs_etm__update_queues(struct cs_etm_auxtrace *etm);
 
+int cs_etm__sample(struct cs_etm_queue *etmq);
+
 #endif
