@@ -115,6 +115,13 @@ cs_etm_decoder__process_data_block(struct cs_etm_decoder *decoder,
 				   uint64_t indx, const uint8_t *buf,
 				   size_t len, size_t *consumed);
 
+struct cs_etm_decoder *
+cs_etm_decoder__new(uint32_t num_cpu,
+		    struct cs_etm_decoder_params *d_params,
+		    struct cs_etm_trace_params t_params[]);
+
+void cs_etm_decoder__free(struct cs_etm_decoder *decoder);
+
 int
 cs_etm_decoder__create_etmv4i_decoder(struct cs_etm_decoder_params *d_params,
 				      struct cs_etm_trace_params *t_params,

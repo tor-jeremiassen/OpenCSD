@@ -247,3 +247,88 @@ cs_etm_decoder__create_etmv4i_decoder(struct cs_etm_decoder_params *d_params,
 
 	return ret;
 }
+
+struct cs_etm_decoder *
+cs_etm_decoder__new(uint32_t num_cpu, struct cs_etm_decoder_params *d_params,
+		    struct cs_etm_trace_params t_params[])
+{
+	struct cs_etm_decoder *decoder;
+	ocsd_dcd_tree_src_t format;
+	uint32_t flags;
+	int ret;
+	size_t i;
+
+	if ((!t_params) || (!d_params))
+		return NULL;
+
+	decoder = zalloc(sizeof(*decoder));
+
+	if (!decoder)
+		return NULL;
+
+	/* init the channel list */
+	INIT_LIST_HEAD(&(decoder->channel_list));
+
+	decoder->state.data = d_params->data;
+	decoder->prev_return = OCSD_RESP_CONT;
+	format = (d_params->formatted ? OCSD_TRC_SRC_FRAME_FORMATTED :
+					 OCSD_TRC_SRC_SINGLE);
+	flags = 0;
+	flags |= (d_params->fsyncs ? OCSD_DFRMTR_HAS_FSYNCS : 0);
+	flags |= (d_params->hsyncs ? OCSD_DFRMTR_HAS_HSYNCS : 0);
+	flags |= (d_params->frame_aligned ? OCSD_DFRMTR_FRAME_MEM_ALIGN : 0);
+
+	/* Drivers may add barrier frames when used with perf, set up to
+	 * handle this. Barriers const of FSYNC packet repeated 4 times.
+	 */
+	flags |= OCSD_DFRMTR_RESET_ON_4X_FSYNC;
+
+	/* Create decode tree for the data source */
+	decoder->dcd_tree = ocsd_create_dcd_tree(format, flags);
+
+	if (decoder->dcd_tree == 0)
+		goto err_free_decoder;
+
+	for (i = 0; i < num_cpu; i++) {
+		switch (t_params[i].protocol) {
+		case CS_ETM_PROTO_ETMV4i:
+			ret = cs_etm_decoder__create_etmv4i_decoder(
+								d_params,
+								&t_params[i],
+								decoder);
+			if (ret != 0)
+				goto err_free_decoder_tree;
+			break;
+		default:
+			goto err_free_decoder_tree;
+		}
+	}
+
+	return decoder;
+
+err_free_decoder_tree:
+	ocsd_destroy_dcd_tree(decoder->dcd_tree);
+err_free_decoder:
+	free(decoder);
+	return NULL;
+}
+
+void cs_etm_decoder__free(struct cs_etm_decoder *decoder)
+{
+	struct cs_etm_channel	*tmp;
+	struct list_head	*pos, *q;
+
+	if (!decoder)
+		return;
+
+	ocsd_destroy_dcd_tree(decoder->dcd_tree);
+	decoder->dcd_tree = NULL;
+
+	list_for_each_safe(pos, q, &(decoder->channel_list)) {
+		tmp = list_entry(pos, struct cs_etm_channel, chan_list);
+		list_del(pos);
+		free(tmp);
+	}
+
+	free(decoder);
+}
