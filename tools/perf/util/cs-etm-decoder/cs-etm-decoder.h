@@ -122,6 +122,10 @@ cs_etm_decoder__new(uint32_t num_cpu,
 
 void cs_etm_decoder__free(struct cs_etm_decoder *decoder);
 
+int cs_etm_decoder__add_mem_access_cb(struct cs_etm_decoder *decoder,
+				      uint64_t start, uint64_t end,
+				      cs_etm_mem_cb_type cb_func);
+
 int
 cs_etm_decoder__create_etmv4i_decoder(struct cs_etm_decoder_params *d_params,
 				      struct cs_etm_trace_params *t_params,

@@ -54,6 +54,38 @@ struct cs_etm_decoder {
 	struct list_head	channel_list;
 };
 
+static uint32_t cs_etm_decoder__mem_access(const void *context,
+					   const ocsd_vaddr_t address,
+					   const ocsd_mem_space_acc_t mem_space,
+					   const uint32_t req_size,
+					   uint8_t *buffer)
+{
+	struct cs_etm_decoder *decoder = (struct cs_etm_decoder *) context;
+	(void) mem_space;
+
+	return decoder->mem_access(decoder->state.data,
+				   address,
+				   req_size,
+				   buffer);
+}
+
+int cs_etm_decoder__add_mem_access_cb(struct cs_etm_decoder *decoder,
+				      uint64_t start, uint64_t end,
+				      cs_etm_mem_cb_type cb_func)
+{
+	int err;
+
+	decoder->mem_access = cb_func;
+	err = ocsd_dt_add_callback_mem_acc(decoder->dcd_tree, start, end,
+					   OCSD_MEM_SPACE_ANY,
+					   cs_etm_decoder__mem_access,
+					   decoder);
+	if (err)
+		return -CS_ETM_ERR_DECODER;
+
+	return 0;
+}
+
 const struct cs_etm_state *
 cs_etm_decoder__process_data_block(struct cs_etm_decoder *decoder,
 				   uint64_t indx, const uint8_t *buf,

@@ -165,6 +165,8 @@ static void cs_etm__free_queue(void *priv)
 		return;
 
 	thread__zput(etmq->thread);
+	cs_etm_decoder__free(etmq->decoder);
+	zfree(&etmq->event_buf);
 	free(etmq);
 }
 
@@ -206,6 +208,84 @@ static void cs_etm__free(struct perf_session *session)
 
 	zfree(&aux->metadata);
 	zfree(&aux);
+}
+
+struct cs_etm_queue *cs_etm__alloc_queue(struct cs_etm_auxtrace *etm,
+					 unsigned int queue_nr)
+{
+	struct cs_etm_decoder_params d_params;
+	struct cs_etm_trace_params  *t_params;
+	struct cs_etm_queue *etmq;
+	size_t i;
+
+	etmq = zalloc(sizeof(*etmq));
+	if (!etmq)
+		return NULL;
+
+	etmq->event_buf = malloc(PERF_SAMPLE_MAX_SIZE);
+	if (!etmq->event_buf)
+		goto out_free;
+
+	etmq->etm = etm;
+	etmq->queue_nr = queue_nr;
+	etmq->pid = -1;
+	etmq->tid = -1;
+	etmq->cpu = -1;
+	etmq->stop = false;
+
+	/* Use metadata to fill in trace parameters for trace decoder */
+	t_params = zalloc(sizeof(*t_params) * etm->num_cpu);
+
+	if (!t_params)
+		goto out_free;
+
+	for (i = 0; i < etm->num_cpu; i++) {
+		t_params[i].reg_idr0 = etm->metadata[i][CS_ETMV4_TRCIDR0];
+		t_params[i].reg_idr1 = etm->metadata[i][CS_ETMV4_TRCIDR1];
+		t_params[i].reg_idr2 = etm->metadata[i][CS_ETMV4_TRCIDR2];
+		t_params[i].reg_idr8 = etm->metadata[i][CS_ETMV4_TRCIDR8];
+		t_params[i].reg_configr = etm->metadata[i][CS_ETMV4_TRCCONFIGR];
+		t_params[i].reg_traceidr =
+					etm->metadata[i][CS_ETMV4_TRCTRACEIDR];
+		t_params[i].protocol = CS_ETM_PROTO_ETMV4i;
+	}
+
+	/* Set decoder parameters to simply print the trace packets */
+	d_params.packet_printer = cs_etm__packet_dump;
+	d_params.operation = CS_ETM_OPERATION_DECODE;
+	d_params.formatted = true;
+	d_params.fsyncs = false;
+	d_params.hsyncs = false;
+	d_params.frame_aligned = true;
+	d_params.data = etmq;
+
+	etmq->decoder = cs_etm_decoder__new(etm->num_cpu, &d_params, t_params);
+
+	zfree(&t_params);
+
+	if (!etmq->decoder)
+		goto out_free;
+
+	/*
+	 * Register a function to handle all memory accesses required by
+	 * the trace decoder library.
+	 */
+	if (cs_etm_decoder__add_mem_access_cb(etmq->decoder,
+					      0x0L, ((u64) -1L),
+					      cs_etm__mem_access))
+		goto out_free_decoder;
+
+	etmq->offset = 0;
+	etmq->eot = false;
+
+	return etmq;
+
+out_free_decoder:
+	cs_etm_decoder__free(etmq->decoder);
+out_free:
+	zfree(&etmq->event_buf);
+	free(etmq);
+	return NULL;
 }
 
 struct cs_etm_queue *cs_etm__cpu_to_etmq(struct cs_etm_auxtrace *etm, int cpu)
