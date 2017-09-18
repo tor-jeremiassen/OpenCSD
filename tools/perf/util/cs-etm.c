@@ -26,6 +26,7 @@
 #include "auxtrace.h"
 #include "color.h"
 #include "cs-etm.h"
+#include "cs-etm-decoder/cs-etm-decoder.h"
 #include "debug.h"
 #include "evlist.h"
 #include "intlist.h"

@@ -1,0 +1,2 @@
+CFLAGS_cs-etm-decoder.o += -I$(CSTRACE_PATH)/include
+libperf-$(CONFIG_AUXTRACE) += cs-etm-decoder.o
