@@ -118,6 +118,8 @@ static void cs_etm__free_events(struct perf_session *session)
 
 static void cs_etm__free(struct perf_session *session)
 {
+	size_t i;
+	struct int_node *inode, *tmp;
 	struct cs_etm_auxtrace *aux = container_of(session->auxtrace,
 						   struct cs_etm_auxtrace,
 						   auxtrace);
@@ -125,6 +127,16 @@ static void cs_etm__free(struct perf_session *session)
 	cs_etm__free_events(session);
 	session->auxtrace = NULL;
 
+	/* First remove all traceID/CPU# nodes for the RB tree */
+	intlist__for_each_entry_safe(inode, tmp, traceid_list)
+		intlist__remove(traceid_list, inode);
+	/* Then the RB tree itself */
+	intlist__delete(traceid_list);
+
+	for (i = 0; i < aux->num_cpu; i++)
+		zfree(&aux->metadata[i]);
+
+	zfree(&aux->metadata);
 	zfree(&aux);
 }
 
@@ -150,6 +162,53 @@ static int cs_etm__process_auxtrace_event(struct perf_session *session,
 	return 0;
 }
 
+static const char * const cs_etm_global_header_fmts[] = {
+	[CS_HEADER_VERSION_0]	= "	Header version		       %llx\n",
+	[CS_PMU_TYPE_CPUS]	= "	PMU type/num cpus	       %llx\n",
+	[CS_ETM_SNAPSHOT]	= "	Snapshot		       %llx\n",
+};
+
+static const char * const cs_etm_priv_fmts[] = {
+	[CS_ETM_MAGIC]		= "	Magic number		       %llx\n",
+	[CS_ETM_CPU]		= "	CPU			       %lld\n",
+	[CS_ETM_ETMCR]		= "	ETMCR			       %llx\n",
+	[CS_ETM_ETMTRACEIDR]	= "	ETMTRACEIDR		       %llx\n",
+	[CS_ETM_ETMCCER]	= "	ETMCCER			       %llx\n",
+	[CS_ETM_ETMIDR]		= "	ETMIDR			       %llx\n",
+};
+
+static const char * const cs_etmv4_priv_fmts[] = {
+	[CS_ETM_MAGIC]		= "	Magic number		       %llx\n",
+	[CS_ETM_CPU]		= "	CPU			       %lld\n",
+	[CS_ETMV4_TRCCONFIGR]	= "	TRCCONFIGR		       %llx\n",
+	[CS_ETMV4_TRCTRACEIDR]	= "	TRCTRACEIDR		       %llx\n",
+	[CS_ETMV4_TRCIDR0]	= "	TRCIDR0			       %llx\n",
+	[CS_ETMV4_TRCIDR1]	= "	TRCIDR1			       %llx\n",
+	[CS_ETMV4_TRCIDR2]	= "	TRCIDR2			       %llx\n",
+	[CS_ETMV4_TRCIDR8]	= "	TRCIDR8			       %llx\n",
+	[CS_ETMV4_TRCAUTHSTATUS] = "	TRCAUTHSTATUS		       %llx\n",
+};
+
+static void cs_etm__print_auxtrace_info(u64 *val, size_t num)
+{
+	unsigned int i, j, cpu;
+
+	for (i = 0; i < CS_HEADER_VERSION_0_MAX; i++)
+		fprintf(stdout, cs_etm_global_header_fmts[i], val[i]);
+
+	for (i = CS_HEADER_VERSION_0_MAX, cpu = 0; cpu < num; cpu++) {
+		if (val[i] == __perf_cs_etmv3_magic)
+			for (j = 0; j < CS_ETM_PRIV_MAX; j++, i++)
+				fprintf(stdout, cs_etm_priv_fmts[j], val[i]);
+		else if (val[i] == __perf_cs_etmv4_magic)
+			for (j = 0; j < CS_ETMV4_PRIV_MAX; j++, i++)
+				fprintf(stdout, cs_etmv4_priv_fmts[j], val[i]);
+		else
+			/* failure.. return */
+			return;
+	}
+}
+
 int cs_etm__process_auxtrace_info(union perf_event *event,
 				  struct perf_session *session)
 {
@@ -157,8 +216,16 @@ int cs_etm__process_auxtrace_info(union perf_event *event,
 	size_t event_header_size = sizeof(struct perf_event_header);
 	size_t info_header_size;
 	size_t total_size = auxtrace_info->header.size;
+	size_t priv_size = 0;
+	size_t num_cpu;
 	struct cs_etm_auxtrace *etm = NULL;
-	int err = 0;
+	int err = 0, idx = -1;
+	u64 *ptr;
+	u64 *hdr = NULL;
+	u64 **metadata = NULL;
+	size_t i, j, k;
+	unsigned int pmu_type;
+	struct int_node *inode;
 
 	/*
 	 * sizeof(auxtrace_info_event::type) +
@@ -169,10 +236,118 @@ int cs_etm__process_auxtrace_info(union perf_event *event,
 	if (total_size < (event_header_size + info_header_size))
 		return -EINVAL;
 
+	priv_size = total_size - event_header_size - info_header_size;
+
+	/* First the global part */
+	ptr = (u64 *) auxtrace_info->priv;
+
+	if (ptr[0] != 0)
+		return -EINVAL;
+
+	hdr = zalloc(sizeof(*hdr) * CS_HEADER_VERSION_0_MAX);
+	if (!hdr)
+		return -ENOMEM;
+
+	for (i = 0; i < CS_HEADER_VERSION_0_MAX; i++)
+		hdr[i] = ptr[i];
+	num_cpu = hdr[CS_PMU_TYPE_CPUS] & 0xffffffff;
+	pmu_type = (unsigned int) ((hdr[CS_PMU_TYPE_CPUS] >> 32) &
+				    0xffffffff);
+
+	/*
+	 * Create an RB tree for traceID-CPU# tuple. Since the conversion has
+	 * to be made for each packet that gets decoded, optimizing access in
+	 * anything other than a sequential array is worth doing.
+	 */
+	traceid_list = intlist__new(NULL);
+	if (!traceid_list) {
+		err = -ENOMEM;
+		goto err_free_hdr;
+	}
+
+	metadata = zalloc(sizeof(*metadata) * num_cpu);
+	if (!metadata) {
+		err = -ENOMEM;
+		goto err_free_traceid_list;
+	}
+
+	/*
+	 * The metadata is stored in the auxtrace_info section and encodes
+	 * the configuration of the ARM embedded trace macrocell which is
+	 * required by the trace decoder to properly decode the trace due
+	 * to its highly compressed nature.
+	 */
+	for (j = 0; j < num_cpu; j++) {
+		if (ptr[i] == __perf_cs_etmv3_magic) {
+			metadata[j] = zalloc(sizeof(*metadata[j]) *
+					     CS_ETM_PRIV_MAX);
+			if (!metadata[j]) {
+				err = -ENOMEM;
+				goto err_free_metadata;
+			}
+			for (k = 0; k < CS_ETM_PRIV_MAX; k++)
+				metadata[j][k] = ptr[i + k];
+
+			/* The traceID is our handle */
+			idx = metadata[j][CS_ETM_ETMTRACEIDR];
+			i += CS_ETM_PRIV_MAX;
+		} else if (ptr[i] == __perf_cs_etmv4_magic) {
+			metadata[j] = zalloc(sizeof(*metadata[j]) *
+					     CS_ETMV4_PRIV_MAX);
+			if (!metadata[j]) {
+				err = -ENOMEM;
+				goto err_free_metadata;
+			}
+			for (k = 0; k < CS_ETMV4_PRIV_MAX; k++)
+				metadata[j][k] = ptr[i + k];
+
+			/* The traceID is our handle */
+			idx = metadata[j][CS_ETMV4_TRCTRACEIDR];
+			i += CS_ETMV4_PRIV_MAX;
+		}
+
+		/* Get an RB node for this CPU */
+		inode = intlist__findnew(traceid_list, idx);
+
+		/* Something went wrong, no need to continue */
+		if (!inode) {
+			err = PTR_ERR(inode);
+			goto err_free_metadata;
+		}
+
+		/*
+		 * The node for that CPU should not be taken.
+		 * Back out if that's the case.
+		 */
+		if (inode->priv) {
+			err = -EINVAL;
+			goto err_free_metadata;
+		}
+		/* All good, associate the traceID with the CPU# */
+		inode->priv = &metadata[j][CS_ETM_CPU];
+	}
+
+	/*
+	 * Each of CS_HEADER_VERSION_0_MAX, CS_ETM_PRIV_MAX and
+	 * CS_ETMV4_PRIV_MAX mark how many double words are in the
+	 * global metadata, and each cpu's metadata respectively.
+	 * The following tests if the correct number of double words was
+	 * present in the auxtrace info section.
+	 */
+	if (i * 8 != priv_size) {
+		err = -EINVAL;
+		goto err_free_metadata;
+	}
+
+	if (dump_trace)
+		cs_etm__print_auxtrace_info(auxtrace_info->priv, num_cpu);
+
 	etm = zalloc(sizeof(*etm));
 
-	if (!etm)
-		return -ENOMEM;
+	if (!etm) {
+		err = -ENOMEM;
+		goto err_free_metadata;
+	}
 
 	err = auxtrace_queues__init(&etm->queues);
 	if (err)
@@ -198,6 +373,12 @@ int cs_etm__process_auxtrace_info(union perf_event *event,
 		goto err_delete_thread;
 	}
 
+	etm->num_cpu = num_cpu;
+	etm->pmu_type = pmu_type;
+	etm->snapshot_mode = (hdr[CS_ETM_SNAPSHOT] != 0);
+	etm->timeless_decoding = true;
+	etm->sampling_mode = false;
+	etm->metadata = metadata;
 	etm->auxtrace_type = auxtrace_info->type;
 
 	etm->auxtrace.process_event	     = cs_etm__process_event;
@@ -225,6 +406,15 @@ err_free_queues:
 	session->auxtrace = NULL;
 err_free_etm:
 	zfree(&etm);
+err_free_metadata:
+	/* No need to check @metadata[j], free(NULL) is supported */
+	for (j = 0; j < num_cpu; j++)
+		free(metadata[j]);
+	zfree(&metadata);
+err_free_traceid_list:
+	intlist__delete(traceid_list);
+err_free_hdr:
+	zfree(&hdr);
 
 	return err;
 }
