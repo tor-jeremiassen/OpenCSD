@@ -30,6 +30,17 @@
 
 #define MAX_BUFFER 1024
 
+/* use raw logging */
+#ifdef CS_DEBUG_RAW
+#define CS_LOG_RAW_FRAMES
+#ifdef CS_RAW_PACKED
+#define CS_RAW_DEBUG_FLAGS (OCSD_DFRMTR_UNPACKED_RAW_OUT | OCSD_DFRMTR_PACKED_RAW_OUT)
+#else
+#define CS_RAW_DEBUG_FLAGS (OCSD_DFRMTR_UNPACKED_RAW_OUT)
+#endif
+#endif
+
+
 struct cs_etm_decoder;
 
 struct cs_etm_channel {
@@ -390,6 +401,52 @@ cs_etm_decoder__etmv4i_packet_printer(const void *context,
 	return ret;
 }
 
+#ifdef CS_LOG_RAW_FRAMES
+static void cs_etm_decoder__print_str_cb(const void *p_context,
+					 const char *psz_msg_str,
+					 const int str_len)
+{
+	if (p_context && str_len)
+		((struct cs_etm_decoder *)p_context)->packet_printer(psz_msg_str);
+}
+
+static void cs_etm_decoder__init_raw_frame_logging(
+					struct cs_etm_decoder_params *d_params,
+					struct cs_etm_decoder *decoder)
+{
+	/* Only log these during a --dump operation */
+	if (d_params->operation == CS_ETM_OPERATION_PRINT) {
+		/* set up a library default logger to process the
+		 *  raw frame printer we add later
+		 */
+		ocsd_def_errlog_init(OCSD_ERR_SEV_ERROR, 1);
+
+		/* no stdout / err / file output */
+		ocsd_def_errlog_config_output(C_API_MSGLOGOUT_FLG_NONE, NULL);
+
+		/* set the string CB for the default logger,
+		 * passes strings to perf print logger.
+		 */
+		ocsd_def_errlog_set_strprint_cb(decoder->dcd_tree,
+						(void *)decoder,
+						cs_etm_decoder__print_str_cb);
+
+		/* use the built in library printer for the raw frames */
+		ocsd_dt_set_raw_frame_printer(decoder->dcd_tree,
+					      CS_RAW_DEBUG_FLAGS);
+	}
+}
+#else
+static void cs_etm_decoder__init_raw_frame_logging(
+					struct cs_etm_decoder_params *d_params,
+					struct cs_etm_decoder *decoder)
+{
+	(void) d_params;
+	(void) decoder;
+}
+#endif
+
+
 struct cs_etm_channel *cs_etm_decoder__create_channel_item(
 						struct cs_etm_decoder *decoder,
 						uint8_t cs_id)
@@ -535,6 +592,9 @@ cs_etm_decoder__new(uint32_t num_cpu, struct cs_etm_decoder_params *d_params,
 
 	if (decoder->dcd_tree == 0)
 		goto err_free_decoder;
+
+	/* init raw frame logging if required */
+	cs_etm_decoder__init_raw_frame_logging(d_params, decoder);
 
 	for (i = 0; i < num_cpu; i++) {
 		switch (t_params[i].protocol) {
