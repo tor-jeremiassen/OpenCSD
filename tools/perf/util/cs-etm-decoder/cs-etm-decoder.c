@@ -29,6 +29,14 @@
 
 #define MAX_BUFFER 1024
 
+struct cs_etm_decoder;
+
+struct cs_etm_channel {
+	struct cs_etm_decoder	*decoder;
+	uint8_t			cs_id;
+	struct list_head	chan_list;
+};
+
 struct cs_etm_decoder {
 	struct cs_etm_state	state;
 	dcd_tree_handle_t	dcd_tree;
@@ -104,4 +112,20 @@ cs_etm_decoder__process_data_block(struct cs_etm_decoder *decoder,
 	decoder->prev_return = dp_ret;
 	decoder->state.err = ret;
 	return &decoder->state;
+}
+
+struct cs_etm_channel *cs_etm_decoder__create_channel_item(
+						struct cs_etm_decoder *decoder,
+						uint8_t cs_id)
+{
+	struct cs_etm_channel *chan;
+
+	chan = (struct cs_etm_channel *) zalloc(sizeof(*chan));
+	if (!chan)
+		return NULL;
+
+	chan->decoder = decoder;
+	chan->cs_id = cs_id;
+	list_add(&(chan->chan_list), &(decoder->channel_list));
+	return chan;
 }

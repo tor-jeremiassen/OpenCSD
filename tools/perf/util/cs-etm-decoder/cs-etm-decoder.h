@@ -105,6 +105,11 @@ enum {
 	CS_ETM_OPERATION_DECODE,
 };
 
+struct cs_etm_channel;
+
+struct cs_etm_channel *cs_etm_decoder__create_channel_item(
+						struct cs_etm_decoder *decoder,
+						uint8_t cs_id);
 const struct cs_etm_state *
 cs_etm_decoder__process_data_block(struct cs_etm_decoder *decoder,
 				   uint64_t indx, const uint8_t *buf,
